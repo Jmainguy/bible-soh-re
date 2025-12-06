@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.4](https://github.com/Jmainguy/bible-soh-re/compare/v1.2.3...v1.2.4) (2025-12-06)
+
+
+### Bug Fixes
+
+* f means folio, or following, so 9:6f means verse 6 and 7 ([fbbc552](https://github.com/Jmainguy/bible-soh-re/commit/fbbc552e4be9158d2bb4ca19b1597a8b5cfb6f9a))
+
 ## [1.2.3](https://github.com/Jmainguy/bible-soh-re/compare/v1.2.2...v1.2.3) (2025-12-06)
 
 

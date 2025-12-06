@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"compress/zlib"
+	"embed"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -15,6 +16,9 @@ import (
 	"strconv"
 	"strings"
 )
+
+//go:embed static
+var staticFiles embed.FS
 
 // Book represents a book in the Bible with its verse structure
 type Book struct {
@@ -671,8 +675,8 @@ func main() {
 	http.HandleFunc("/api/books", handleBooks)
 	http.HandleFunc("/api/chapter", handleChapter)
 
-	// Serve static files
-	fs := http.FileServer(http.Dir("static"))
+	// Serve static files from embedded filesystem
+	fs := http.FileServer(http.FS(staticFiles))
 	http.Handle("/", fs)
 
 	log.Println("Server starting on http://localhost:8080")

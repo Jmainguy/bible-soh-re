@@ -22,6 +22,7 @@ const toggleSidebarBtn = document.getElementById('toggleSidebar');
 const sidebar = document.getElementById('sidebar');
 const sidebarIcon = document.getElementById('sidebarIcon');
 const contentWrapper = document.getElementById('contentWrapper');
+const sidebarOverlay = document.getElementById('sidebarOverlay');
 
 // Update browser URL with current state
 function updateURL(verseNum = null) {
@@ -237,6 +238,7 @@ function selectBook(book) {
         sidebar.classList.add('collapsed');
         contentWrapper.classList.add('sidebar-collapsed');
         toggleSidebarBtn.classList.add('sidebar-hidden');
+        sidebarOverlay.classList.remove('active');
         sidebarIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>';
         sidebarVisible = false;
     }
@@ -635,12 +637,28 @@ function setupEventListeners() {
                 sidebar.classList.remove('collapsed');
                 contentWrapper.classList.remove('sidebar-collapsed');
                 toggleSidebarBtn.classList.remove('sidebar-hidden');
+                sidebarOverlay.classList.add('active');
                 sidebarIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>';
             } else {
                 sidebar.classList.add('collapsed');
                 contentWrapper.classList.add('sidebar-collapsed');
                 toggleSidebarBtn.classList.add('sidebar-hidden');
+                sidebarOverlay.classList.remove('active');
                 sidebarIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>';
+            }
+        });
+    }
+    
+    // Close sidebar when clicking overlay
+    if (sidebarOverlay) {
+        sidebarOverlay.addEventListener('click', () => {
+            if (sidebarVisible && window.innerWidth <= 1024) {
+                sidebar.classList.add('collapsed');
+                contentWrapper.classList.add('sidebar-collapsed');
+                toggleSidebarBtn.classList.add('sidebar-hidden');
+                sidebarOverlay.classList.remove('active');
+                sidebarIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>';
+                sidebarVisible = false;
             }
         });
     }

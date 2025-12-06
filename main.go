@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -675,9 +676,12 @@ func main() {
 	http.HandleFunc("/api/books", handleBooks)
 	http.HandleFunc("/api/chapter", handleChapter)
 
-	// Serve static files from embedded filesystem
-	fs := http.FileServer(http.FS(staticFiles))
-	http.Handle("/", fs)
+	// Serve static files from embedded filesystem at root
+	staticFS, err := fs.Sub(staticFiles, "static")
+	if err != nil {
+		log.Fatal(err)
+	}
+	http.Handle("/", http.FileServer(http.FS(staticFS)))
 
 	log.Println("Server starting on http://localhost:8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.3](https://github.com/Jmainguy/bible-soh-re/compare/v1.2.2...v1.2.3) (2025-12-06)
+
+
+### Bug Fixes
+
+* hyperlinks for emtv now display, and use nasb for OT references ([2217c99](https://github.com/Jmainguy/bible-soh-re/commit/2217c991e89c3f393897570646a0bb510751653b))
+
 ## [1.2.2](https://github.com/Jmainguy/bible-soh-re/compare/v1.2.1...v1.2.2) (2025-12-06)
 
 

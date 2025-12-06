@@ -500,21 +500,39 @@ function createReferenceLink(refText) {
             html += '; ';
         }
         
-        // Full reference with book: "Ps 22:27" or "Is 49:22"
-        const fullRefMatch = part.match(/^([1-3]?\s*[A-Za-z]+\.?)\s+(\d+):(\d+(?:-\d+)?)$/);
+        // Full reference with book: "Ps 22:27", "Is 9:6f" (f means "and following")
+        const fullRefMatch = part.match(/^([1-3]?\s*[A-Za-z]+\.?)\s+(\d+):(\d+(?:-\d+)?)(f{1,2})?$/);
         if (fullRefMatch) {
             currentBook = fullRefMatch[1].trim();
             currentChapter = fullRefMatch[2];
-            const verse = fullRefMatch[3];
+            let verse = fullRefMatch[3];
+            const followingSuffix = fullRefMatch[4]; // "f" or "ff"
+            
+            // Convert "f" to range (f = next verse, ff = next 2+ verses)
+            if (followingSuffix) {
+                const baseVerse = parseInt(verse);
+                const endVerse = followingSuffix === 'ff' ? baseVerse + 2 : baseVerse + 1;
+                verse = `${baseVerse}-${endVerse}`;
+            }
+            
             html += createSingleReferenceLink(currentBook, currentChapter, verse, part);
             continue;
         }
         
-        // Chapter:verse reference (implies same book): "86:9"
-        const chapterVerseMatch = part.match(/^(\d+):(\d+(?:-\d+)?)$/);
+        // Chapter:verse reference (implies same book): "86:9" or "89:3f"
+        const chapterVerseMatch = part.match(/^(\d+):(\d+(?:-\d+)?)(f{1,2})?$/);
         if (chapterVerseMatch && currentBook) {
             currentChapter = chapterVerseMatch[1];
-            const verse = chapterVerseMatch[2];
+            let verse = chapterVerseMatch[2];
+            const followingSuffix = chapterVerseMatch[3];
+            
+            // Convert "f" to range
+            if (followingSuffix) {
+                const baseVerse = parseInt(verse);
+                const endVerse = followingSuffix === 'ff' ? baseVerse + 2 : baseVerse + 1;
+                verse = `${baseVerse}-${endVerse}`;
+            }
+            
             html += createSingleReferenceLink(currentBook, currentChapter, verse, part);
             continue;
         }

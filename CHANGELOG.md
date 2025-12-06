@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.0](https://github.com/Jmainguy/bible-soh-re/compare/v1.0.3...v1.1.0) (2025-12-06)
+
+
+### Features
+
+* add favicon ([1924915](https://github.com/Jmainguy/bible-soh-re/commit/1924915d162d6409585febebc4968e38fb8d04f3))
+* support mobile gestures to scroll chapters ([1a68206](https://github.com/Jmainguy/bible-soh-re/commit/1a6820664c56bd6d0b47197b5e3b6bd8e60c40bf))
+
 ## [1.0.3](https://github.com/Jmainguy/bible-soh-re/compare/v1.0.2...v1.0.3) (2025-12-06)
 
 

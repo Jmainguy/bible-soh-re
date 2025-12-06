@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.2](https://github.com/Jmainguy/bible-soh-re/compare/v1.1.1...v1.1.2) (2025-12-06)
+
+
+### Bug Fixes
+
+* mobile ux, hide side menu indicator ([381803c](https://github.com/Jmainguy/bible-soh-re/commit/381803c01d51320f8c028a125eee8905a0cb1a82))
+
 ## [1.1.1](https://github.com/Jmainguy/bible-soh-re/compare/v1.1.0...v1.1.1) (2025-12-06)
 
 

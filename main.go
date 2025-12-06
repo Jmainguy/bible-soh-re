@@ -505,7 +505,9 @@ func parseVerseData(text string) map[string]interface{} {
 				// Check if this is a very long note (like EMTV translator's message)
 				if len(noteContent) > 500 {
 					// Extract as introductory note
-					noteText := hiBoldPattern.ReplaceAllString(noteContent, "")
+					// First convert reference tags to plain text
+					noteText := referencePattern.ReplaceAllString(noteContent, "$1")
+					noteText = hiBoldPattern.ReplaceAllString(noteText, "")
 					noteText = lineBreakPattern.ReplaceAllString(noteText, "\n")
 					noteText = tagPattern.ReplaceAllString(noteText, "")
 					noteText = strings.TrimSpace(noteText)
@@ -514,8 +516,9 @@ func parseVerseData(text string) map[string]interface{} {
 					}
 					continue
 				}
-				// Remove all tags to get clean note text
-				noteText := hiBoldPattern.ReplaceAllString(noteContent, "")
+				// Convert reference tags to plain text before removing other tags
+				noteText := referencePattern.ReplaceAllString(noteContent, "$1")
+				noteText = hiBoldPattern.ReplaceAllString(noteText, "")
 				noteText = lineBreakPattern.ReplaceAllString(noteText, " ")
 				noteText = tagPattern.ReplaceAllString(noteText, "")
 				noteText = strings.TrimSpace(noteText)

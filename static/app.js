@@ -385,7 +385,7 @@ function renderVerses(verses) {
                 const marker = note.marker ? `[${note.marker}] ` : '';
                 const noteText = note.text || note; // Handle both old string format and new object format
                 html += `<div class="verse-references">
-                    <span class="font-semibold">${marker}</span>${escapeHtml(noteText)}
+                    <span class="font-semibold">${marker}</span>${createReferenceLink(noteText)}
                 </div>`;
             });
         }
@@ -396,7 +396,7 @@ function renderVerses(verses) {
                 const marker = note.marker ? `[${note.marker}] ` : '';
                 const noteText = note.text || note; // Handle both old string format and new object format
                 html += `<div class="verse-references">
-                    <span class="font-semibold">Study note: ${marker}</span>${escapeHtml(noteText)}
+                    <span class="font-semibold">Study note: ${marker}</span>${createReferenceLink(noteText)}
                 </div>`;
             });
         }
@@ -537,7 +537,14 @@ function createReferenceLink(refText) {
 // Helper function to create a single reference link
 function createSingleReferenceLink(bookAbbrev, chapter, verse, displayText) {
     const fullBookName = getFullBookName(bookAbbrev);
-    const refUrl = `${window.location.origin}/?translation=${selectedTranslation}&book=${encodeURIComponent(fullBookName)}&chapter=${chapter}&verse=${verse}`;
+    
+    // Check if the book exists in the current translation
+    const bookExists = bibleBooks.some(b => b.name.toLowerCase() === fullBookName.toLowerCase());
+    
+    // If book doesn't exist in current translation, use NASB as fallback
+    const translationToUse = bookExists ? selectedTranslation : 'nasb';
+    
+    const refUrl = `${window.location.origin}/?translation=${translationToUse}&book=${encodeURIComponent(fullBookName)}&chapter=${chapter}&verse=${verse}`;
     return `<a href="${refUrl}" target="_blank" class="reference-link" data-book="${escapeHtml(fullBookName)}" data-chapter="${chapter}" data-verse="${verse}">${escapeHtml(displayText)}</a>`;
 }
 

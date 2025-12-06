@@ -311,12 +311,24 @@ function renderVerses(verses) {
         container.classList.add('hide-references');
     }
     
+    // Check if first verse has an intro note
+    if (verses.length > 0 && verses[0].introNote) {
+        const introDiv = document.createElement('div');
+        introDiv.className = 'intro-note bg-blue-50 border-l-4 border-blue-500 p-4 mb-6 text-sm';
+        introDiv.innerHTML = `
+            <div class="font-semibold text-blue-900 mb-2">Translator's Note</div>
+            <div class="text-gray-700 whitespace-pre-line">${escapeHtml(verses[0].introNote)}</div>
+        `;
+        container.appendChild(introDiv);
+    }
+    
     verses.forEach((verseData) => {
         const verseNum = verseData.verse;
         const verseText = verseData.text || '';
         const sectionTitle = verseData.sectionTitle || '';
         const crossReferences = verseData.crossReferences || [];
         const notes = verseData.notes || [];
+        const studyNotes = verseData.studyNotes || [];
         
         // Display section title if present
         if (sectionTitle) {
@@ -364,6 +376,17 @@ function renderVerses(verses) {
             });
         }
         
+        // Add study notes (KJV marginal notes) if they exist and should be shown
+        if (studyNotes.length > 0 && showReferences) {
+            studyNotes.forEach(note => {
+                const marker = note.marker ? `[${note.marker}] ` : '';
+                const noteText = note.text || note; // Handle both old string format and new object format
+                html += `<div class="verse-references">
+                    <span class="font-semibold">Study note: ${marker}</span>${escapeHtml(noteText)}
+                </div>`;
+            });
+        }
+        
         verseDiv.innerHTML = html;
         container.appendChild(verseDiv);
     });
@@ -389,8 +412,9 @@ function createReferenceLink(refText) {
         const chapter = match[2];
         const verse = match[3];
         
-        // Create a clickable link
-        html += `<a href="#" class="reference-link" data-book="${escapeHtml(bookName)}" data-chapter="${chapter}" data-verse="${verse}">${escapeHtml(match[0])}</a>`;
+        // Create a clickable link with proper URL
+        const refUrl = `${window.location.origin}/?translation=${selectedTranslation}&book=${encodeURIComponent(bookName)}&chapter=${chapter}&verse=${verse}`;
+        html += `<a href="${refUrl}" target="_blank" class="reference-link" data-book="${escapeHtml(bookName)}" data-chapter="${chapter}" data-verse="${verse}">${escapeHtml(match[0])}</a>`;
         
         lastIndex = match.index + match[0].length;
     }
@@ -424,8 +448,8 @@ function formatVerseText(text, verseNum) {
     return html;
 }
 
-// Navigate to a specific book and chapter
-function navigateToReference(bookName, chapter) {
+// Navigate to a specific book and chapter (and optionally verse)
+function navigateToReference(bookName, chapter, verse = null) {
     // Try to find matching book (handle abbreviations)
     const bookMap = {
         'Gen': 'Genesis', 'Gen.': 'Genesis',
@@ -504,8 +528,20 @@ function navigateToReference(bookName, chapter) {
     );
     
     if (book) {
-        // Open in new tab with translation parameter
-        window.open(`/?translation=${selectedTranslation}&book=${encodeURIComponent(book.name)}&chapter=${chapter}`, '_blank');
+        currentBook = book.name;
+        currentChapter = parseInt(chapter);
+        maxChapter = book.chapterCount;
+        updateChapterSelector();
+        loadChapter().then(() => {
+            if (verse) {
+                // Update URL with verse parameter
+                updateURL(parseInt(verse));
+                // Wait for DOM to update, then scroll to verse
+                setTimeout(() => scrollToVerse(parseInt(verse)), 100);
+            } else {
+                updateURL();
+            }
+        });
     }
 }
 
@@ -666,10 +702,8 @@ function setupEventListeners() {
     // Handle reference link clicks with event delegation
     versesContainer.addEventListener('click', (e) => {
         if (e.target.classList.contains('reference-link')) {
-            e.preventDefault();
-            const bookName = e.target.dataset.book;
-            const chapter = e.target.dataset.chapter;
-            navigateToReference(bookName, chapter);
+            // Let the browser handle the link naturally (opens in new tab due to target="_blank")
+            return;
         }
         
         // Handle verse number clicks - copy to clipboard on left-click

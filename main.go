@@ -6,6 +6,7 @@ import (
 	"embed"
 	"encoding/binary"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"io/fs"
@@ -285,25 +286,40 @@ type Translation struct {
 	NTReader    *ZTextReader
 	OTStructure *BibleStructure
 	NTStructure *BibleStructure
+	HasOT       bool
+	HasNT       bool
 }
 
 var translations map[string]*Translation
 var translationNames []string
 var tagPattern = regexp.MustCompile(`<[^>]+>`)
 var sectionTitlePattern = regexp.MustCompile(`<title[^>]*(?:subType="x-preverse"|type="x-s")[^>]*>([^<]+)</title>`)
+var parallelTitlePattern = regexp.MustCompile(`<title[^>]*type="parallel"[^>]*>(.*?)</title>`)
 var crossRefPattern = regexp.MustCompile(`<note[^>]*type="crossReference"[^>]*>(.*?)</note>`)
 var crossRefWithMarkerPattern = regexp.MustCompile(`<note\s+n="([^"]+)"[^>]*type="crossReference"[^>]*>(.*?)</note>`)
 var explanationPattern = regexp.MustCompile(`<note[^>]*(?:type="explanation"|placement="foot")[^>]*>(.*?)</note>`)
 var explanationWithMarkerPattern = regexp.MustCompile(`<note\s+n="([^"]+)"[^>]*type="explanation"[^>]*>(.*?)</note>`)
+var genericNotePattern = regexp.MustCompile(`<note(?:\s+[^>]*)?>(.*?)</note>`)
+var studyNotePattern = regexp.MustCompile(`<note[^>]*type="study"[^>]*>(.*?)</note>`)
+var studyNoteWithMarkerPattern = regexp.MustCompile(`<note\s+n="([^"]+)"[^>]*type="study"[^>]*>(.*?)</note>`)
+var catchWordPattern = regexp.MustCompile(`<catchWord>([^<]+)</catchWord>`)
 var referencePattern = regexp.MustCompile(`<reference[^>]*>([^<]+)</reference>`)
 var transChangePattern = regexp.MustCompile(`<transChange[^>]*type="added"[^>]*>([^<]*)</transChange>`)
 var milestonePattern = regexp.MustCompile(`<milestone[^>]*/>`)
 var hiItalicPattern = regexp.MustCompile(`<hi type="italic">([^<]+)</hi>`)
+var hiBoldPattern = regexp.MustCompile(`<hi type="bold">([^<]+)</hi>`)
+var lineBreakPattern = regexp.MustCompile(`<lb/>`)
 
 func cleanText(text string) string {
 	// Convert italic formatting to HTML tags
 	// LEB/NASB italic text: <hi type="italic">text</hi> -> <i>text</i>
 	cleaned := hiItalicPattern.ReplaceAllString(text, "<i>$1</i>")
+
+	// Remove bold tags (used in EMTV translator notes)
+	cleaned = hiBoldPattern.ReplaceAllString(cleaned, "$1")
+
+	// Replace line breaks with spaces
+	cleaned = lineBreakPattern.ReplaceAllString(cleaned, " ")
 
 	// Temporarily replace our HTML tags with placeholders
 	cleaned = strings.ReplaceAll(cleaned, "<i>", "⟪ITALIC_START⟫")
@@ -340,6 +356,24 @@ func parseVerseData(text string) map[string]interface{} {
 	}
 
 	crossRefs := []NoteWithMarker{}
+
+	// BSB parallel references - extract and add to cross-references
+	for _, match := range parallelTitlePattern.FindAllStringSubmatch(text, -1) {
+		if len(match) > 1 {
+			noteContent := match[1]
+			refs := referencePattern.FindAllStringSubmatch(noteContent, -1)
+			refList := []string{}
+			for _, ref := range refs {
+				if len(ref) > 1 {
+					refList = append(refList, strings.TrimSpace(ref[1]))
+				}
+			}
+			if len(refList) > 0 {
+				crossRefs = append(crossRefs, NoteWithMarker{Text: "See also: " + strings.Join(refList, "; ")})
+			}
+		}
+	}
+
 	// First try with markers (NASB)
 	for _, match := range crossRefWithMarkerPattern.FindAllStringSubmatch(text, -1) {
 		if len(match) > 2 {
@@ -379,6 +413,50 @@ func parseVerseData(text string) map[string]interface{} {
 		result["crossReferences"] = crossRefs
 	}
 
+	// Extract study notes (KJV marginal notes and alternative readings)
+	// These use catchWord tags to indicate where the marker should appear
+	type StudyNoteWithCatchWord struct {
+		Marker    string
+		Text      string
+		CatchWord string
+	}
+	studyNotesWithCatch := []StudyNoteWithCatchWord{}
+
+	// Extract study notes and their catch words
+	letterIdx := 0
+	for _, match := range studyNotePattern.FindAllStringSubmatch(text, -1) {
+		if len(match) > 1 {
+			noteContent := match[1]
+			// Extract catch word
+			catchWord := ""
+			if cwMatch := catchWordPattern.FindStringSubmatch(noteContent); len(cwMatch) > 1 {
+				catchWord = cwMatch[1]
+			}
+			// Remove all tags to get clean note text
+			noteText := tagPattern.ReplaceAllString(noteContent, "")
+			noteText = strings.TrimSpace(noteText)
+			if noteText != "" {
+				// Assign letter marker (A, B, C, etc.)
+				marker := string(rune('A' + letterIdx))
+				letterIdx++
+				studyNotesWithCatch = append(studyNotesWithCatch, StudyNoteWithCatchWord{
+					Marker:    marker,
+					Text:      noteText,
+					CatchWord: catchWord,
+				})
+			}
+		}
+	}
+
+	// Convert to output format for JSON
+	studyNotes := []NoteWithMarker{}
+	for _, note := range studyNotesWithCatch {
+		studyNotes = append(studyNotes, NoteWithMarker{Marker: note.Marker, Text: note.Text})
+	}
+	if len(studyNotes) > 0 {
+		result["studyNotes"] = studyNotes
+	}
+
 	// Extract explanatory notes with markers (both NASB and LEB)
 	notes := []NoteWithMarker{}
 	// First try with markers (NASB)
@@ -411,9 +489,73 @@ func parseVerseData(text string) map[string]interface{} {
 		result["notes"] = notes
 	}
 
+	// Extract generic notes (EMTV) - these don't have type attributes
+	// Only process if no other notes were found to avoid duplicates
+	if len(notes) == 0 {
+		letterIdx := 0
+		for _, match := range genericNotePattern.FindAllStringSubmatch(text, -1) {
+			if len(match) > 1 {
+				noteContent := match[1]
+				// Check if this is a very long note (like EMTV translator's message)
+				if len(noteContent) > 500 {
+					// Extract as introductory note
+					noteText := hiBoldPattern.ReplaceAllString(noteContent, "")
+					noteText = lineBreakPattern.ReplaceAllString(noteText, "\n")
+					noteText = tagPattern.ReplaceAllString(noteText, "")
+					noteText = strings.TrimSpace(noteText)
+					if noteText != "" {
+						result["introNote"] = noteText
+					}
+					continue
+				}
+				// Remove all tags to get clean note text
+				noteText := hiBoldPattern.ReplaceAllString(noteContent, "")
+				noteText = lineBreakPattern.ReplaceAllString(noteText, " ")
+				noteText = tagPattern.ReplaceAllString(noteText, "")
+				noteText = strings.TrimSpace(noteText)
+				if noteText != "" {
+					marker := string(rune('a' + letterIdx))
+					notes = append(notes, NoteWithMarker{Marker: marker, Text: noteText})
+					letterIdx++
+				}
+			}
+		}
+		if len(notes) > 0 {
+			result["notes"] = notes
+		}
+	}
+
 	// Remove section titles from the main text
 	cleanedText := text
 	cleanedText = sectionTitlePattern.ReplaceAllString(cleanedText, "")
+	cleanedText = parallelTitlePattern.ReplaceAllString(cleanedText, "")
+
+	// Replace catch words in study notes with markers
+	// We need to do this before removing the study notes themselves
+	for _, studyNote := range studyNotesWithCatch {
+		if studyNote.CatchWord != "" {
+			catchWord := studyNote.CatchWord
+
+			// Check if catch word ends with ellipsis (…) indicating partial match
+			isPartial := strings.HasSuffix(catchWord, "…") || strings.HasSuffix(catchWord, "...")
+			if isPartial {
+				// Strip ellipsis for partial matching
+				catchWord = strings.TrimSuffix(catchWord, "…")
+				catchWord = strings.TrimSuffix(catchWord, "...")
+				// Match the prefix of a word
+				catchWordPattern := regexp.MustCompile(`(>|\s|^)(` + regexp.QuoteMeta(catchWord) + `[^<]*)`)
+				cleanedText = catchWordPattern.ReplaceAllString(cleanedText, `${1}${2}<sup>[`+studyNote.Marker+`]</sup>`)
+			} else {
+				// Exact match for whole words
+				catchWordPattern := regexp.MustCompile(`(>|\s|^)(` + regexp.QuoteMeta(catchWord) + `)(</w>|<|\s|[.,;:]|$)`)
+				cleanedText = catchWordPattern.ReplaceAllString(cleanedText, `${1}${2}<sup>[`+studyNote.Marker+`]</sup>${3}`)
+			}
+		}
+	}
+
+	// Remove study notes (KJV marginal notes) completely
+	cleanedText = studyNoteWithMarkerPattern.ReplaceAllString(cleanedText, "")
+	cleanedText = studyNotePattern.ReplaceAllString(cleanedText, "")
 
 	// Replace cross-references with markers
 	cleanedText = crossRefWithMarkerPattern.ReplaceAllString(cleanedText, "<sup>[$1]</sup>")
@@ -423,9 +565,23 @@ func parseVerseData(text string) map[string]interface{} {
 	if len(notes) > 0 {
 		// For NASB with markers
 		cleanedText = explanationWithMarkerPattern.ReplaceAllString(cleanedText, "<sup>[$1]</sup>")
-		// For LEB without markers - use sequential letters
+		// For LEB/EMTV without markers - use sequential letters
 		letterIdx := 0
+		// First try specific typed notes
 		cleanedText = explanationPattern.ReplaceAllStringFunc(cleanedText, func(match string) string {
+			if letterIdx < len(notes) {
+				marker := notes[letterIdx].Marker
+				letterIdx++
+				return "<sup>[" + marker + "]</sup>"
+			}
+			return ""
+		})
+		// Then generic notes (EMTV)
+		cleanedText = genericNotePattern.ReplaceAllStringFunc(cleanedText, func(match string) string {
+			// Skip very long notes (like translator's message)
+			if len(match) > 500 {
+				return ""
+			}
 			if letterIdx < len(notes) {
 				marker := notes[letterIdx].Marker
 				letterIdx++
@@ -435,6 +591,11 @@ func parseVerseData(text string) map[string]interface{} {
 		})
 	} else {
 		cleanedText = explanationPattern.ReplaceAllString(cleanedText, "")
+		// Remove generic notes without markers
+		cleanedText = genericNotePattern.ReplaceAllStringFunc(cleanedText, func(match string) string {
+			// Always remove long notes (translator's message)
+			return ""
+		})
 	}
 
 	// Convert LEB idioms to italic tags BEFORE removing milestones
@@ -448,6 +609,9 @@ func parseVerseData(text string) map[string]interface{} {
 
 	// Remove x-preverse and other divs
 	cleanedText = regexp.MustCompile(`<div[^>]*subType="x-preverse"[^>]*>.*?</div>`).ReplaceAllString(cleanedText, "")
+	cleanedText = regexp.MustCompile(`<div[^>]*type="x-milestone"[^>]*/>`).ReplaceAllString(cleanedText, "")
+	cleanedText = regexp.MustCompile(`<div[^>]*type="x-milestone"[^>]*>`).ReplaceAllString(cleanedText, "")
+	cleanedText = regexp.MustCompile(`<div[^>]*(?:sID|eID)="[^"]*"[^>]*/?>`).ReplaceAllString(cleanedText, "")
 	cleanedText = regexp.MustCompile(`<div[^>]*type="x-p"[^>]*/?>`).ReplaceAllString(cleanedText, "")
 	cleanedText = regexp.MustCompile(`</div>`).ReplaceAllString(cleanedText, "")
 
@@ -464,20 +628,39 @@ func parseVerseData(text string) map[string]interface{} {
 	return result
 }
 
-func loadTranslation(name, path, fullName, description string) error {
+func loadTranslation(name, path, fullName, description, testaments string) error {
 	log.Printf("Loading translation: %s from %s", name, path)
 
-	otReader, err := NewZTextReader(path + "/ot")
-	if err != nil {
-		return fmt.Errorf("loading OT: %w", err)
+	// Default to "both" if not specified
+	if testaments == "" {
+		testaments = "both"
 	}
 
-	ntReader, err := NewZTextReader(path + "/nt")
-	if err != nil {
-		if closeErr := otReader.Close(); closeErr != nil {
-			log.Printf("Failed to close OT reader: %v", closeErr)
+	var otReader *ZTextReader
+	var ntReader *ZTextReader
+	var err error
+
+	// Load OT if needed
+	hasOT := testaments == "both" || testaments == "ot"
+	if hasOT {
+		otReader, err = NewZTextReader(path + "/ot")
+		if err != nil {
+			return fmt.Errorf("loading OT: %w", err)
 		}
-		return fmt.Errorf("loading NT: %w", err)
+	}
+
+	// Load NT if needed
+	hasNT := testaments == "both" || testaments == "nt"
+	if hasNT {
+		ntReader, err = NewZTextReader(path + "/nt")
+		if err != nil {
+			if otReader != nil {
+				if closeErr := otReader.Close(); closeErr != nil {
+					log.Printf("Failed to close OT reader: %v", closeErr)
+				}
+			}
+			return fmt.Errorf("loading NT: %w", err)
+		}
 	}
 
 	translations[name] = &Translation{
@@ -488,19 +671,25 @@ func loadTranslation(name, path, fullName, description string) error {
 		NTReader:    ntReader,
 		OTStructure: NewBibleStructure(kjvOT),
 		NTStructure: NewBibleStructure(kjvNT),
+		HasOT:       hasOT,
+		HasNT:       hasNT,
 	}
 
-	// Calculate total verses
+	// Calculate verse counts based on what's configured
 	otTotal := uint32(0)
-	for _, book := range kjvOT {
-		for _, chapterLen := range book.ChapterLengths {
-			otTotal += uint32(chapterLen)
+	if hasOT {
+		for _, book := range kjvOT {
+			for _, chapterLen := range book.ChapterLengths {
+				otTotal += uint32(chapterLen)
+			}
 		}
 	}
 	ntTotal := uint32(0)
-	for _, book := range kjvNT {
-		for _, chapterLen := range book.ChapterLengths {
-			ntTotal += uint32(chapterLen)
+	if hasNT {
+		for _, book := range kjvNT {
+			for _, chapterLen := range book.ChapterLengths {
+				ntTotal += uint32(chapterLen)
+			}
 		}
 	}
 	log.Printf("Loaded %s: %d OT verses, %d NT verses (Total: %d)", name, otTotal, ntTotal, otTotal+ntTotal)
@@ -538,6 +727,15 @@ func getChapter(translation, bookName string, chapter int) ([]map[string]interfa
 	}
 	if book == nil {
 		return nil, fmt.Errorf("book not found: %s", bookName)
+	}
+
+	// Verify the reader exists for this testament
+	if reader == nil {
+		testament := "Old"
+		if structure == trans.NTStructure {
+			testament = "New"
+		}
+		return nil, fmt.Errorf("%s Testament not available in translation %s", testament, translation)
 	}
 
 	if chapter < 1 || chapter > len(book.ChapterLengths) {
@@ -583,19 +781,40 @@ func handleTranslations(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleBooks(w http.ResponseWriter, r *http.Request) {
+	translationName := r.URL.Query().Get("translation")
+
+	// Default to first translation if not specified
+	if translationName == "" && len(translationNames) > 0 {
+		translationName = translationNames[0]
+	}
+
+	// Get the translation to check which testaments are available
+	trans, ok := translations[translationName]
+	if !ok {
+		http.Error(w, "Translation not found", http.StatusBadRequest)
+		return
+	}
 
 	books := make([]map[string]interface{}, 0, len(kjvOT)+len(kjvNT))
-	for _, book := range kjvOT {
-		books = append(books, map[string]interface{}{
-			"name":         book.Name,
-			"chapterCount": len(book.ChapterLengths),
-		})
+
+	// Only include OT books if translation has OT
+	if trans.HasOT {
+		for _, book := range kjvOT {
+			books = append(books, map[string]interface{}{
+				"name":         book.Name,
+				"chapterCount": len(book.ChapterLengths),
+			})
+		}
 	}
-	for _, book := range kjvNT {
-		books = append(books, map[string]interface{}{
-			"name":         book.Name,
-			"chapterCount": len(book.ChapterLengths),
-		})
+
+	// Only include NT books if translation has NT
+	if trans.HasNT {
+		for _, book := range kjvNT {
+			books = append(books, map[string]interface{}{
+				"name":         book.Name,
+				"chapterCount": len(book.ChapterLengths),
+			})
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -642,6 +861,13 @@ func handleChapter(w http.ResponseWriter, r *http.Request) {
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
+	// Parse command-line flags
+	debugTranslation := flag.String("debug", "", "Translation to debug (e.g., kjv)")
+	debugBook := flag.String("book", "", "Book name for debug mode (e.g., Genesis)")
+	debugChapter := flag.Int("chapter", 0, "Chapter number for debug mode")
+	debugVerse := flag.Int("verse", 0, "Verse number for debug mode")
+	flag.Parse()
+
 	// Initialize translations
 	translations = make(map[string]*Translation)
 
@@ -660,7 +886,7 @@ func main() {
 	// Load translations from config
 	for _, tc := range config.Translations {
 		translationPath := filepath.Join("translations", tc.Name)
-		if err := loadTranslation(tc.Name, translationPath, tc.FullName, tc.Description); err != nil {
+		if err := loadTranslation(tc.Name, translationPath, tc.FullName, tc.Description, tc.Testaments); err != nil {
 			log.Printf("Warning: Could not load %s: %v", tc.Name, err)
 		} else {
 			translationNames = append(translationNames, tc.Name)
@@ -671,7 +897,70 @@ func main() {
 		log.Fatal("No translations could be loaded")
 	}
 
-	// Setup HTTP routes
+	// Debug mode: print raw verse text
+	if *debugTranslation != "" {
+		if *debugBook == "" || *debugChapter == 0 || *debugVerse == 0 {
+			log.Fatal("Debug mode requires --debug, --book, --chapter, and --verse flags")
+		}
+
+		translation, ok := translations[*debugTranslation]
+		if !ok {
+			log.Fatalf("Translation '%s' not found. Available: %v", *debugTranslation, translationNames)
+		}
+
+		// Find the book
+		var book *Book
+		var structure *BibleStructure
+		var reader *ZTextReader
+		for i := range kjvOT {
+			if strings.EqualFold(kjvOT[i].Name, *debugBook) || strings.EqualFold(kjvOT[i].OSIS, *debugBook) {
+				book = &kjvOT[i]
+				structure = translation.OTStructure
+				reader = translation.OTReader
+				break
+			}
+		}
+		if book == nil {
+			for i := range kjvNT {
+				if strings.EqualFold(kjvNT[i].Name, *debugBook) || strings.EqualFold(kjvNT[i].OSIS, *debugBook) {
+					book = &kjvNT[i]
+					structure = translation.NTStructure
+					reader = translation.NTReader
+					break
+				}
+			}
+		}
+		if book == nil {
+			log.Fatalf("Book '%s' not found", *debugBook)
+		}
+
+		if *debugChapter < 1 || *debugChapter > len(book.ChapterLengths) {
+			log.Fatalf("Chapter %d out of range for book '%s' (1-%d)", *debugChapter, book.Name, len(book.ChapterLengths))
+		}
+
+		verseCount := book.ChapterLengths[*debugChapter-1]
+		if *debugVerse < 1 || *debugVerse > verseCount {
+			log.Fatalf("Verse %d out of range for chapter %d (1-%d)", *debugVerse, *debugChapter, verseCount)
+		}
+
+		idx, err := structure.GetVerseIndex(book.Name, *debugChapter, *debugVerse)
+		if err != nil {
+			log.Fatalf("Failed to get verse index: %v", err)
+		}
+
+		rawText, err := reader.ReadVerse(idx)
+		if err != nil {
+			log.Fatalf("Failed to read verse: %v", err)
+		}
+
+		fmt.Printf("Translation: %s\n", *debugTranslation)
+		fmt.Printf("Book: %s\n", book.Name)
+		fmt.Printf("Chapter: %d\n", *debugChapter)
+		fmt.Printf("Verse: %d\n", *debugVerse)
+		fmt.Printf("\nRaw verse text (including OSIS formatting):\n")
+		fmt.Printf("%s\n", rawText)
+		return
+	} // Setup HTTP routes
 	http.HandleFunc("/api/translations", handleTranslations)
 	http.HandleFunc("/api/books", handleBooks)
 	http.HandleFunc("/api/chapter", handleChapter)

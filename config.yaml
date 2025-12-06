@@ -38,3 +38,24 @@ translations:
       user: anonymous
       password: password
       directory: /pub/sword/raw/modules/texts/ztext/mkjv
+
+  - name: bsb
+    fullName: BSB
+    description: Berean Study Bible
+    ftp:
+      host: ftp.crosswire.org
+      port: 21
+      user: anonymous
+      password: password
+      directory: /pub/sword/raw/modules/texts/ztext/bsb
+
+  - name: emtv
+    fullName: EMTV
+    description: English Majority Text Version
+    testaments: nt
+    ftp:
+      host: ftp.crosswire.org
+      port: 21
+      user: anonymous
+      password: password
+      directory: /pub/sword/raw/modules/texts/ztext/emtv

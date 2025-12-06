@@ -25,6 +25,7 @@ type TranslationConfig struct {
 	Name        string    `yaml:"name"`
 	FullName    string    `yaml:"fullName"`
 	Description string    `yaml:"description"`
+	Testaments  string    `yaml:"testaments"` // "both", "ot", "nt" - defaults to "both" if not specified
 	FTP         FTPConfig `yaml:"ftp"`
 }
 

@@ -3,7 +3,7 @@ let bibleBooks = [];
 let currentBook = null;
 let currentChapter = 1;
 let maxChapter = 1;
-let showReferences = true; // Toggle for showing/hiding references
+let showReferences = false; // Toggle for showing/hiding references
 let selectedTranslation = ''; // Currently selected translation
 let translationInfo = {}; // Translation metadata (fullName, description)
 let sidebarVisible = true; // Sidebar visibility state
@@ -54,6 +54,15 @@ function scrollToVerse(verseNum) {
 
 // Initialize the application
 async function init() {
+    // Hide sidebar on mobile by default
+    if (window.innerWidth <= 1024) {
+        sidebar.classList.add('collapsed');
+        contentWrapper.classList.add('sidebar-collapsed');
+        toggleSidebarBtn.classList.add('sidebar-hidden');
+        sidebarIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>';
+        sidebarVisible = false;
+    }
+    
     await loadTranslations();
     
     // Check URL parameters first
@@ -63,10 +72,14 @@ async function init() {
     const chapterParam = urlParams.get('chapter');
     const verseParam = urlParams.get('verse');
     
-    // Set translation from URL if provided
+    // Set translation from URL if provided, otherwise default to NASB
     if (translationParam && translationInfo[translationParam]) {
         selectedTranslation = translationParam;
         translationSelect.value = translationParam;
+        updateHeader();
+    } else if (translationInfo['nasb']) {
+        selectedTranslation = 'nasb';
+        translationSelect.value = 'nasb';
         updateHeader();
     }
     
@@ -97,6 +110,27 @@ async function init() {
             if (verseParam) {
                 setTimeout(() => scrollToVerse(parseInt(verseParam)), 300);
             }
+        }
+    } else {
+        // Load Genesis 1 by default if no URL params
+        const genesis = bibleBooks.find(b => b.name === 'Genesis');
+        if (genesis) {
+            currentBook = 'Genesis';
+            currentChapter = 1;
+            maxChapter = genesis.chapterCount;
+            
+            // Update chapter selector
+            chapterSelect.innerHTML = '';
+            for (let i = 1; i <= maxChapter; i++) {
+                const option = document.createElement('option');
+                option.value = i;
+                option.textContent = `Chapter ${i}`;
+                chapterSelect.appendChild(option);
+            }
+            chapterSelect.value = currentChapter;
+            chapterSelector.classList.remove('hidden');
+            
+            await loadChapter();
         }
     }
 }
@@ -200,6 +234,15 @@ function selectBook(book) {
     
     loadChapter();
     updateURL();
+    
+    // Auto-hide sidebar on mobile after selection
+    if (window.innerWidth <= 1024 && sidebarVisible) {
+        sidebar.classList.add('collapsed');
+        contentWrapper.classList.add('sidebar-collapsed');
+        toggleSidebarBtn.classList.add('sidebar-hidden');
+        sidebarIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>';
+        sidebarVisible = false;
+    }
 }
 
 // Load and display a specific chapter
@@ -518,6 +561,11 @@ function setupEventListeners() {
     
     // Toggle references button
     if (toggleReferencesBtn) {
+        // Set initial button text based on default state
+        toggleReferencesBtn.innerHTML = showReferences 
+            ? '<svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg> Hide References'
+            : '<svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path></svg> Show References';
+        
         toggleReferencesBtn.addEventListener('click', () => {
             showReferences = !showReferences;
             toggleReferencesBtn.innerHTML = showReferences 

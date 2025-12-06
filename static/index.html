@@ -139,14 +139,7 @@
             transition: all 0.3s ease-in-out;
         }
         .toggle-sidebar {
-            position: fixed;
-            left: 0.5rem;
-            top: 5rem;
-            z-index: 50;
-            transition: all 0.3s ease-in-out;
-        }
-        .toggle-sidebar.sidebar-hidden {
-            left: 0.5rem;
+            display: none;
         }
         .sidebar-overlay {
             display: none;
@@ -187,8 +180,7 @@
                 transform: translateX(0);
             }
             .toggle-sidebar {
-                top: 4rem;
-                left: 0.5rem;
+                display: inline-block;
             }
             .bible-page {
                 padding: 1rem !important;
@@ -207,20 +199,27 @@
         <!-- Header -->
         <header class="bg-blue-900 text-white shadow-lg">
             <div class="container mx-auto px-4 py-3 md:py-6">
-                <h1 id="translationFullName" class="text-xl md:text-3xl font-bold text-center">Holy Bible</h1>
-                <p id="translationDescription" class="text-center text-blue-200 mt-1 md:mt-2 text-sm md:text-base"></p>
+                <div class="flex items-center justify-between md:justify-center">
+                    <!-- Mobile menu button -->
+                    <button id="toggleSidebar" class="toggle-sidebar bg-blue-700 hover:bg-blue-600 text-white p-2 rounded-lg transition">
+                        <svg id="sidebarIcon" class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
+                    </button>
+                    
+                    <div class="flex-1 md:flex-none">
+                        <h1 id="translationFullName" class="text-xl md:text-3xl font-bold text-center">Holy Bible</h1>
+                        <p id="translationDescription" class="text-center text-blue-200 mt-1 md:mt-2 text-sm md:text-base"></p>
+                    </div>
+                    
+                    <!-- Spacer for flex layout on mobile -->
+                    <div class="w-10 md:hidden"></div>
+                </div>
             </div>
         </header>
 
         <!-- Main Content -->
         <div class="container mx-auto px-2 md:px-4 py-4 md:py-8">
-            <!-- Sidebar Toggle Button -->
-            <button id="toggleSidebar" class="toggle-sidebar bg-blue-600 text-white p-2 md:p-3 rounded-lg shadow-lg hover:bg-blue-700 transition">
-                <svg id="sidebarIcon" class="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
-                </svg>
-            </button>
-
             <div id="contentWrapper" class="content-wrapper">
                 <!-- Sidebar - Book Selection -->
                 <div id="sidebar" class="sidebar">

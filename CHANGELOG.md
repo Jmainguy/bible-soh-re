@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/Jmainguy/bible-soh-re/compare/v1.1.0...v1.1.1) (2025-12-06)
+
+
+### Bug Fixes
+
+* improve mobile UX ([9b4e032](https://github.com/Jmainguy/bible-soh-re/commit/9b4e032c44d3b4c433fbb6bf99086a55ef04a20e))
+
 ## [1.1.0](https://github.com/Jmainguy/bible-soh-re/compare/v1.0.3...v1.1.0) (2025-12-06)
 
 

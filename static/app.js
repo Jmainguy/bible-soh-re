@@ -40,17 +40,34 @@ function updateURL(verseNum = null) {
     window.history.pushState({}, '', newUrl);
 }
 
-// Scroll to a specific verse
+// Scroll to a specific verse or verse range
 function scrollToVerse(verseNum) {
-    const verseElement = document.querySelector(`[data-verse="${verseNum}"]`);
-    if (verseElement) {
-        verseElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        verseElement.style.backgroundColor = '#fef3c7';
-        setTimeout(() => {
-            verseElement.style.transition = 'background-color 2s';
-            verseElement.style.backgroundColor = '';
-        }, 1000);
+    // Handle verse ranges (e.g., "20-23")
+    let verses = [];
+    if (typeof verseNum === 'string' && verseNum.includes('-')) {
+        const [start, end] = verseNum.split('-').map(v => parseInt(v.trim()));
+        for (let i = start; i <= end; i++) {
+            verses.push(i);
+        }
+    } else {
+        verses = [parseInt(verseNum)];
     }
+    
+    // Highlight all verses in the range
+    verses.forEach((v, index) => {
+        const verseElement = document.querySelector(`[data-verse="${v}"]`);
+        if (verseElement) {
+            // Scroll to the first verse in range
+            if (index === 0) {
+                verseElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+            verseElement.style.backgroundColor = '#fef3c7';
+            setTimeout(() => {
+                verseElement.style.transition = 'background-color 2s';
+                verseElement.style.backgroundColor = '';
+            }, 1000);
+        }
+    });
 }
 
 // Initialize the application
@@ -98,9 +115,9 @@ async function init() {
             
             await loadChapter();
             
-            // Scroll to verse if provided
+            // Scroll to verse or verse range if provided
             if (verseParam) {
-                setTimeout(() => scrollToVerse(parseInt(verseParam)), 300);
+                setTimeout(() => scrollToVerse(verseParam), 300);
             }
         }
     } else {
@@ -391,37 +408,137 @@ function renderVerses(verses) {
     versesContainer.appendChild(container);
 }
 
+// Map book abbreviations to full names
+function getFullBookName(bookName) {
+    const bookMap = {
+        'gen': 'Genesis', 'gen.': 'Genesis',
+        'ex': 'Exodus', 'exod': 'Exodus', 'exod.': 'Exodus', 'exo': 'Exodus',
+        'lev': 'Leviticus', 'lev.': 'Leviticus',
+        'num': 'Numbers', 'num.': 'Numbers', 'numb': 'Numbers',
+        'deut': 'Deuteronomy', 'deut.': 'Deuteronomy', 'deu': 'Deuteronomy', 'dt': 'Deuteronomy',
+        'josh': 'Joshua', 'josh.': 'Joshua', 'jos': 'Joshua',
+        'judg': 'Judges', 'judg.': 'Judges', 'jdg': 'Judges',
+        'ruth': 'Ruth', 'rut': 'Ruth',
+        '1 sam': '1 Samuel', '1sam': '1 Samuel', '1 sam.': '1 Samuel', '1sa': '1 Samuel', '1 sa': '1 Samuel',
+        '2 sam': '2 Samuel', '2sam': '2 Samuel', '2 sam.': '2 Samuel', '2sa': '2 Samuel', '2 sa': '2 Samuel',
+        '1 kin': '1 Kings', '1kin': '1 Kings', '1 kgs': '1 Kings', '1 kings': '1 Kings', '1ki': '1 Kings', '1 ki': '1 Kings',
+        '2 kin': '2 Kings', '2kin': '2 Kings', '2 kgs': '2 Kings', '2 kings': '2 Kings', '2ki': '2 Kings', '2 ki': '2 Kings',
+        '1 chr': '1 Chronicles', '1chr': '1 Chronicles', '1 chron': '1 Chronicles', '1ch': '1 Chronicles', '1 ch': '1 Chronicles',
+        '2 chr': '2 Chronicles', '2chr': '2 Chronicles', '2 chron': '2 Chronicles', '2ch': '2 Chronicles', '2 ch': '2 Chronicles',
+        'ezra': 'Ezra', 'ezr': 'Ezra',
+        'neh': 'Nehemiah', 'neh.': 'Nehemiah', 'ne': 'Nehemiah',
+        'esth': 'Esther', 'esth.': 'Esther', 'est': 'Esther', 'es': 'Esther',
+        'job': 'Job',
+        'ps': 'Psalms', 'psa': 'Psalms', 'psalm': 'Psalms', 'pss': 'Psalms',
+        'prov': 'Proverbs', 'prov.': 'Proverbs', 'pro': 'Proverbs', 'prv': 'Proverbs',
+        'eccl': 'Ecclesiastes', 'eccl.': 'Ecclesiastes', 'ecc': 'Ecclesiastes', 'qoh': 'Ecclesiastes',
+        'song': 'Song of Solomon', 'song.': 'Song of Solomon', 'sos': 'Song of Solomon', 'so': 'Song of Solomon',
+        'is': 'Isaiah', 'isa': 'Isaiah', 'isa.': 'Isaiah', 'is.': 'Isaiah',
+        'jer': 'Jeremiah', 'jer.': 'Jeremiah', 'je': 'Jeremiah',
+        'lam': 'Lamentations', 'lam.': 'Lamentations', 'la': 'Lamentations',
+        'ezek': 'Ezekiel', 'ezek.': 'Ezekiel', 'eze': 'Ezekiel', 'ezk': 'Ezekiel',
+        'dan': 'Daniel', 'dan.': 'Daniel', 'da': 'Daniel', 'dn': 'Daniel',
+        'hos': 'Hosea', 'hos.': 'Hosea', 'ho': 'Hosea',
+        'joel': 'Joel', 'joe': 'Joel', 'jl': 'Joel',
+        'amos': 'Amos', 'am': 'Amos',
+        'obad': 'Obadiah', 'obad.': 'Obadiah', 'oba': 'Obadiah', 'ob': 'Obadiah',
+        'jon': 'Jonah', 'jonah': 'Jonah', 'jnh': 'Jonah',
+        'mic': 'Micah', 'mic.': 'Micah', 'mi': 'Micah',
+        'nah': 'Nahum', 'nah.': 'Nahum', 'na': 'Nahum',
+        'hab': 'Habakkuk', 'hab.': 'Habakkuk', 'hb': 'Habakkuk',
+        'zeph': 'Zephaniah', 'zeph.': 'Zephaniah', 'zep': 'Zephaniah',
+        'hag': 'Haggai', 'hag.': 'Haggai', 'hg': 'Haggai',
+        'zech': 'Zechariah', 'zech.': 'Zechariah', 'zec': 'Zechariah', 'zch': 'Zechariah',
+        'mal': 'Malachi', 'mal.': 'Malachi',
+        'matt': 'Matthew', 'matt.': 'Matthew', 'mt': 'Matthew', 'mat': 'Matthew',
+        'mark': 'Mark', 'mk': 'Mark', 'mar': 'Mark', 'mrk': 'Mark',
+        'luke': 'Luke', 'lk': 'Luke', 'luk': 'Luke',
+        'john': 'John', 'jn': 'John', 'jhn': 'John',
+        'acts': 'Acts', 'act': 'Acts', 'ac': 'Acts',
+        'rom': 'Romans', 'rom.': 'Romans', 'ro': 'Romans',
+        '1 cor': '1 Corinthians', '1cor': '1 Corinthians', '1 cor.': '1 Corinthians', '1co': '1 Corinthians', '1 co': '1 Corinthians',
+        '2 cor': '2 Corinthians', '2cor': '2 Corinthians', '2 cor.': '2 Corinthians', '2co': '2 Corinthians', '2 co': '2 Corinthians',
+        'gal': 'Galatians', 'gal.': 'Galatians', 'ga': 'Galatians',
+        'eph': 'Ephesians', 'eph.': 'Ephesians', 'ephes': 'Ephesians',
+        'phil': 'Philippians', 'phil.': 'Philippians', 'php': 'Philippians', 'ph': 'Philippians',
+        'col': 'Colossians', 'col.': 'Colossians',
+        '1 thess': '1 Thessalonians', '1thess': '1 Thessalonians', '1 thess.': '1 Thessalonians', '1th': '1 Thessalonians', '1 th': '1 Thessalonians',
+        '2 thess': '2 Thessalonians', '2thess': '2 Thessalonians', '2 thess.': '2 Thessalonians', '2th': '2 Thessalonians', '2 th': '2 Thessalonians',
+        '1 tim': '1 Timothy', '1tim': '1 Timothy', '1 tim.': '1 Timothy', '1ti': '1 Timothy', '1 ti': '1 Timothy',
+        '2 tim': '2 Timothy', '2tim': '2 Timothy', '2 tim.': '2 Timothy', '2ti': '2 Timothy', '2 ti': '2 Timothy',
+        'titus': 'Titus', 'tit': 'Titus', 'ti': 'Titus',
+        'philem': 'Philemon', 'phlm': 'Philemon', 'phlm.': 'Philemon', 'phm': 'Philemon',
+        'heb': 'Hebrews', 'heb.': 'Hebrews',
+        'james': 'James', 'jas': 'James', 'jas.': 'James', 'jam': 'James', 'jm': 'James',
+        '1 pet': '1 Peter', '1pet': '1 Peter', '1 pet.': '1 Peter', '1pe': '1 Peter', '1 pe': '1 Peter', '1p': '1 Peter', '1 p': '1 Peter',
+        '2 pet': '2 Peter', '2pet': '2 Peter', '2 pet.': '2 Peter', '2pe': '2 Peter', '2 pe': '2 Peter', '2p': '2 Peter', '2 p': '2 Peter',
+        '1 john': '1 John', '1john': '1 John', '1jn': '1 John', '1 jn': '1 John', '1j': '1 John', '1 j': '1 John',
+        '2 john': '2 John', '2john': '2 John', '2jn': '2 John', '2 jn': '2 John', '2j': '2 John', '2 j': '2 John',
+        '3 john': '3 John', '3john': '3 John', '3jn': '3 John', '3 jn': '3 John', '3j': '3 John', '3 j': '3 John',
+        'jude': 'Jude', 'jud': 'Jude',
+        'rev': 'Revelation', 'rev.': 'Revelation', 're': 'Revelation'
+    };
+    
+    return bookMap[bookName.toLowerCase()] || bookName;
+}
+
 // Parse a reference string and create a clickable link
 function createReferenceLink(refText) {
-    // Match patterns like "John 3:16", "1 Cor 8:6", "Gen 1:1", "Ps 102:25", etc.
-    const refPattern = /([1-3]?\s*[A-Za-z]+\.?)\s+(\d+):(\d+)/g;
+    // Parse complex references like "Ps 22:27; 86:9; Is 49:22; 23; 60:3; Zech 8:20-23"
+    // Split by semicolon to get individual references
+    const refParts = refText.split(';');
     let html = '';
-    let lastIndex = 0;
-    let match;
+    let currentBook = null;
+    let currentChapter = null;
     
-    while ((match = refPattern.exec(refText)) !== null) {
-        // Add any text before the match (like semicolons, commas)
-        if (match.index > lastIndex) {
-            html += escapeHtml(refText.substring(lastIndex, match.index));
+    for (let i = 0; i < refParts.length; i++) {
+        const part = refParts[i].trim();
+        if (!part) continue;
+        
+        // Add semicolon separator between references (except first)
+        if (i > 0) {
+            html += '; ';
         }
         
-        const bookName = match[1].trim();
-        const chapter = match[2];
-        const verse = match[3];
+        // Full reference with book: "Ps 22:27" or "Is 49:22"
+        const fullRefMatch = part.match(/^([1-3]?\s*[A-Za-z]+\.?)\s+(\d+):(\d+(?:-\d+)?)$/);
+        if (fullRefMatch) {
+            currentBook = fullRefMatch[1].trim();
+            currentChapter = fullRefMatch[2];
+            const verse = fullRefMatch[3];
+            html += createSingleReferenceLink(currentBook, currentChapter, verse, part);
+            continue;
+        }
         
-        // Create a clickable link with proper URL
-        const refUrl = `${window.location.origin}/?translation=${selectedTranslation}&book=${encodeURIComponent(bookName)}&chapter=${chapter}&verse=${verse}`;
-        html += `<a href="${refUrl}" target="_blank" class="reference-link" data-book="${escapeHtml(bookName)}" data-chapter="${chapter}" data-verse="${verse}">${escapeHtml(match[0])}</a>`;
+        // Chapter:verse reference (implies same book): "86:9"
+        const chapterVerseMatch = part.match(/^(\d+):(\d+(?:-\d+)?)$/);
+        if (chapterVerseMatch && currentBook) {
+            currentChapter = chapterVerseMatch[1];
+            const verse = chapterVerseMatch[2];
+            html += createSingleReferenceLink(currentBook, currentChapter, verse, part);
+            continue;
+        }
         
-        lastIndex = match.index + match[0].length;
-    }
-    
-    // Add any remaining text
-    if (lastIndex < refText.length) {
-        html += escapeHtml(refText.substring(lastIndex));
+        // Verse-only reference (implies same book and chapter): "23" or "20-23"
+        const verseOnlyMatch = part.match(/^(\d+(?:-\d+)?)$/);
+        if (verseOnlyMatch && currentBook && currentChapter) {
+            const verse = verseOnlyMatch[1];
+            html += createSingleReferenceLink(currentBook, currentChapter, verse, part);
+            continue;
+        }
+        
+        // If no match, just add as plain text
+        html += escapeHtml(part);
     }
     
     return html || escapeHtml(refText);
+}
+
+// Helper function to create a single reference link
+function createSingleReferenceLink(bookAbbrev, chapter, verse, displayText) {
+    const fullBookName = getFullBookName(bookAbbrev);
+    const refUrl = `${window.location.origin}/?translation=${selectedTranslation}&book=${encodeURIComponent(fullBookName)}&chapter=${chapter}&verse=${verse}`;
+    return `<a href="${refUrl}" target="_blank" class="reference-link" data-book="${escapeHtml(fullBookName)}" data-chapter="${chapter}" data-verse="${verse}">${escapeHtml(displayText)}</a>`;
 }
 
 // Format verse text - allows <i> and <sup> tags, escapes everything else
@@ -445,78 +562,10 @@ function formatVerseText(text, verseNum) {
     return html;
 }
 
-// Navigate to a specific book and chapter (and optionally verse)
+// Navigate to a specific book and chapter (and optionally verse or verse range)
 function navigateToReference(bookName, chapter, verse = null) {
-    // Try to find matching book (handle abbreviations)
-    const bookMap = {
-        'Gen': 'Genesis', 'Gen.': 'Genesis',
-        'Ex': 'Exodus', 'Exod': 'Exodus', 'Exod.': 'Exodus',
-        'Lev': 'Leviticus', 'Lev.': 'Leviticus',
-        'Num': 'Numbers', 'Num.': 'Numbers',
-        'Deut': 'Deuteronomy', 'Deut.': 'Deuteronomy',
-        'Josh': 'Joshua', 'Josh.': 'Joshua',
-        'Judg': 'Judges', 'Judg.': 'Judges',
-        'Ruth': 'Ruth',
-        '1 Sam': '1 Samuel', '1Sam': '1 Samuel', '1 Sam.': '1 Samuel',
-        '2 Sam': '2 Samuel', '2Sam': '2 Samuel', '2 Sam.': '2 Samuel',
-        '1 Kin': '1 Kings', '1Kin': '1 Kings', '1 Kgs': '1 Kings', '1 Kings': '1 Kings',
-        '2 Kin': '2 Kings', '2Kin': '2 Kings', '2 Kgs': '2 Kings', '2 Kings': '2 Kings',
-        '1 Chr': '1 Chronicles', '1Chr': '1 Chronicles', '1 Chron': '1 Chronicles',
-        '2 Chr': '2 Chronicles', '2Chr': '2 Chronicles', '2 Chron': '2 Chronicles',
-        'Ezra': 'Ezra', 'Neh': 'Nehemiah', 'Neh.': 'Nehemiah',
-        'Esth': 'Esther', 'Esth.': 'Esther',
-        'Job': 'Job',
-        'Ps': 'Psalms', 'Psa': 'Psalms', 'Psalm': 'Psalms',
-        'Prov': 'Proverbs', 'Prov.': 'Proverbs',
-        'Eccl': 'Ecclesiastes', 'Eccl.': 'Ecclesiastes',
-        'Song': 'Song of Solomon', 'Song.': 'Song of Solomon',
-        'Is': 'Isaiah', 'Isa': 'Isaiah', 'Isa.': 'Isaiah', 'Is.': 'Isaiah',
-        'Jer': 'Jeremiah', 'Jer.': 'Jeremiah',
-        'Lam': 'Lamentations', 'Lam.': 'Lamentations',
-        'Ezek': 'Ezekiel', 'Ezek.': 'Ezekiel',
-        'Dan': 'Daniel', 'Dan.': 'Daniel',
-        'Hos': 'Hosea', 'Hos.': 'Hosea',
-        'Joel': 'Joel',
-        'Amos': 'Amos',
-        'Obad': 'Obadiah', 'Obad.': 'Obadiah',
-        'Jon': 'Jonah', 'Jonah': 'Jonah',
-        'Mic': 'Micah', 'Mic.': 'Micah',
-        'Nah': 'Nahum', 'Nah.': 'Nahum',
-        'Hab': 'Habakkuk', 'Hab.': 'Habakkuk',
-        'Zeph': 'Zephaniah', 'Zeph.': 'Zephaniah',
-        'Hag': 'Haggai', 'Hag.': 'Haggai',
-        'Zech': 'Zechariah', 'Zech.': 'Zechariah',
-        'Mal': 'Malachi', 'Mal.': 'Malachi',
-        'Matt': 'Matthew', 'Matt.': 'Matthew',
-        'Mark': 'Mark',
-        'Luke': 'Luke',
-        'John': 'John',
-        'Acts': 'Acts',
-        'Rom': 'Romans', 'Rom.': 'Romans',
-        '1 Cor': '1 Corinthians', '1Cor': '1 Corinthians', '1 Cor.': '1 Corinthians',
-        '2 Cor': '2 Corinthians', '2Cor': '2 Corinthians', '2 Cor.': '2 Corinthians',
-        'Gal': 'Galatians', 'Gal.': 'Galatians',
-        'Eph': 'Ephesians', 'Eph.': 'Ephesians',
-        'Phil': 'Philippians', 'Phil.': 'Philippians',
-        'Col': 'Colossians', 'Col.': 'Colossians',
-        '1 Thess': '1 Thessalonians', '1Thess': '1 Thessalonians', '1 Thess.': '1 Thessalonians',
-        '2 Thess': '2 Thessalonians', '2Thess': '2 Thessalonians', '2 Thess.': '2 Thessalonians',
-        '1 Tim': '1 Timothy', '1Tim': '1 Timothy', '1 Tim.': '1 Timothy',
-        '2 Tim': '2 Timothy', '2Tim': '2 Timothy', '2 Tim.': '2 Timothy',
-        'Titus': 'Titus',
-        'Philem': 'Philemon', 'Phlm': 'Philemon', 'Phlm.': 'Philemon',
-        'Heb': 'Hebrews', 'Heb.': 'Hebrews',
-        'James': 'James', 'Jas': 'James', 'Jas.': 'James',
-        '1 Pet': '1 Peter', '1Pet': '1 Peter', '1 Pet.': '1 Peter',
-        '2 Pet': '2 Peter', '2Pet': '2 Peter', '2 Pet.': '2 Peter',
-        '1 John': '1 John', '1John': '1 John',
-        '2 John': '2 John', '2John': '2 John',
-        '3 John': '3 John', '3John': '3 John',
-        'Jude': 'Jude',
-        'Rev': 'Revelation', 'Rev.': 'Revelation'
-    };
-    
-    let fullBookName = bookMap[bookName] || bookName;
+    // Get full book name from abbreviation
+    let fullBookName = getFullBookName(bookName);
     
     // Try to find the book
     const book = bibleBooks.find(b => 
@@ -531,10 +580,22 @@ function navigateToReference(bookName, chapter, verse = null) {
         updateChapterSelector();
         loadChapter().then(() => {
             if (verse) {
-                // Update URL with verse parameter
-                updateURL(parseInt(verse));
-                // Wait for DOM to update, then scroll to verse
-                setTimeout(() => scrollToVerse(parseInt(verse)), 100);
+                // Handle verse ranges (e.g., "20-23") or single verses
+                const verseParam = verse.toString();
+                // Update URL with verse parameter (keep range format if present)
+                if (verseParam.includes('-')) {
+                    const params = new URLSearchParams();
+                    params.set('translation', selectedTranslation);
+                    params.set('book', currentBook);
+                    params.set('chapter', currentChapter);
+                    params.set('verse', verseParam);
+                    const newUrl = `${window.location.pathname}?${params.toString()}`;
+                    window.history.pushState({}, '', newUrl);
+                } else {
+                    updateURL(parseInt(verse));
+                }
+                // Wait for DOM to update, then scroll to verse/range
+                setTimeout(() => scrollToVerse(verseParam), 100);
             } else {
                 updateURL();
             }
@@ -759,9 +820,13 @@ function setupEventListeners() {
         const diffX = touchEndX - touchStartX;
         const diffY = touchEndY - touchStartY;
         const minSwipeDistance = 50;
+        const maxVerticalMovement = 30; // Maximum vertical movement allowed for horizontal swipe
         
         // Only trigger if horizontal swipe is greater than vertical (to avoid interfering with scroll)
-        if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > minSwipeDistance) {
+        // AND vertical movement is minimal (to prevent triggering during scrolling)
+        if (Math.abs(diffX) > Math.abs(diffY) && 
+            Math.abs(diffX) > minSwipeDistance && 
+            Math.abs(diffY) < maxVerticalMovement) {
             if (diffX > 0) {
                 // Swipe right - go to previous chapter
                 if (!prevChapterBtn.disabled) {

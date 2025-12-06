@@ -155,7 +155,7 @@ func DownloadAllTranslations(config *Config) error {
 	return nil
 }
 
-// TranslationExists checks if a translation directory exists and has files
+// TranslationExists checks if a translation directory exists and has required files
 func TranslationExists(name string) bool {
 	localDir := filepath.Join("translations", name)
 
@@ -165,22 +165,23 @@ func TranslationExists(name string) bool {
 		return false
 	}
 
-	// Check if directory has any .bzz, .bzs, or .bzv files
-	entries, err := os.ReadDir(localDir)
-	if err != nil {
-		return false
+	// Check for required files (ot.bzv, ot.bzs, ot.bzz, nt.bzv, nt.bzs, nt.bzz)
+	requiredFiles := []string{
+		filepath.Join(localDir, "ot.bzv"),
+		filepath.Join(localDir, "ot.bzs"),
+		filepath.Join(localDir, "ot.bzz"),
+		filepath.Join(localDir, "nt.bzv"),
+		filepath.Join(localDir, "nt.bzs"),
+		filepath.Join(localDir, "nt.bzz"),
 	}
 
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			name := entry.Name()
-			if filepath.Ext(name) == ".bzz" || filepath.Ext(name) == ".bzs" || filepath.Ext(name) == ".bzv" {
-				return true
-			}
+	for _, file := range requiredFiles {
+		if _, err := os.Stat(file); err != nil {
+			return false
 		}
 	}
 
-	return false
+	return true
 }
 
 // EnsureTranslationsExist checks if translations exist, downloads them if missing

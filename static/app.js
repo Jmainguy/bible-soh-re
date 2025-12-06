@@ -93,16 +93,7 @@ async function init() {
             currentChapter = parseInt(chapterParam);
             maxChapter = book.chapterCount;
             
-            // Update chapter selector
-            chapterSelect.innerHTML = '';
-            for (let i = 1; i <= maxChapter; i++) {
-                const option = document.createElement('option');
-                option.value = i;
-                option.textContent = `Chapter ${i}`;
-                chapterSelect.appendChild(option);
-            }
-            chapterSelect.value = currentChapter;
-            chapterSelector.classList.remove('hidden');
+            updateChapterSelector();
             
             await loadChapter();
             
@@ -119,16 +110,7 @@ async function init() {
             currentChapter = 1;
             maxChapter = genesis.chapterCount;
             
-            // Update chapter selector
-            chapterSelect.innerHTML = '';
-            for (let i = 1; i <= maxChapter; i++) {
-                const option = document.createElement('option');
-                option.value = i;
-                option.textContent = `Chapter ${i}`;
-                chapterSelect.appendChild(option);
-            }
-            chapterSelect.value = currentChapter;
-            chapterSelector.classList.remove('hidden');
+            updateChapterSelector();
             
             await loadChapter();
         }
@@ -189,6 +171,7 @@ function renderBookList() {
     bibleBooks.forEach((book, index) => {
         const bookButton = document.createElement('button');
         bookButton.className = 'w-full text-left px-3 py-2 rounded-md hover:bg-blue-50 transition text-sm';
+        bookButton.setAttribute('data-book-name', book.name);
         bookButton.innerHTML = `
             <div class="font-medium text-gray-800">${book.name}</div>
             <div class="text-xs text-gray-500">${book.chapterCount} chapter${book.chapterCount > 1 ? 's' : ''}</div>
@@ -215,22 +198,36 @@ function renderBookList() {
     });
 }
 
+// Update the highlighted book in the sidebar
+function updateBookHighlight() {
+    // Remove highlight from all books
+    const allBookButtons = bookList.querySelectorAll('button[data-book-name]');
+    allBookButtons.forEach(btn => {
+        btn.classList.remove('bg-blue-100', 'border-2', 'border-blue-500');
+        btn.classList.add('hover:bg-blue-50');
+    });
+    
+    // Highlight current book
+    if (currentBook) {
+        const currentButton = bookList.querySelector(`button[data-book-name="${currentBook}"]`);
+        if (currentButton) {
+            currentButton.classList.add('bg-blue-100', 'border-2', 'border-blue-500');
+            currentButton.classList.remove('hover:bg-blue-50');
+            
+            // Scroll the book into view in the sidebar
+            currentButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }
+}
+
 // Select a book and load its first chapter
 function selectBook(book) {
     currentBook = book.name;
     currentChapter = 1;
     maxChapter = book.chapterCount;
     
-    // Update chapter selector
-    chapterSelect.innerHTML = '';
-    for (let i = 1; i <= maxChapter; i++) {
-        const option = document.createElement('option');
-        option.value = i;
-        option.textContent = `Chapter ${i}`;
-        chapterSelect.appendChild(option);
-    }
-    chapterSelect.value = 1;
-    chapterSelector.classList.remove('hidden');
+    updateChapterSelector();
+    updateBookHighlight();
     
     loadChapter();
     updateURL();
@@ -263,9 +260,13 @@ async function loadChapter() {
         // Render verses
         renderVerses(data.verses);
         
-        // Update navigation buttons
-        prevChapterBtn.disabled = currentChapter <= 1;
-        nextChapterBtn.disabled = currentChapter >= maxChapter;
+        // Update navigation buttons - only disable at absolute boundaries
+        const currentIndex = bibleBooks.findIndex(b => b.name === currentBook);
+        prevChapterBtn.disabled = (currentChapter <= 1 && currentIndex <= 0);
+        nextChapterBtn.disabled = (currentChapter >= maxChapter && currentIndex >= bibleBooks.length - 1);
+        
+        // Update book highlighting in sidebar
+        updateBookHighlight();
         
         // Update URL
         updateURL();
@@ -513,12 +514,60 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// Navigate to next book
+function goToNextBook() {
+    const currentIndex = bibleBooks.findIndex(b => b.name === currentBook);
+    if (currentIndex >= 0 && currentIndex < bibleBooks.length - 1) {
+        const nextBook = bibleBooks[currentIndex + 1];
+        currentBook = nextBook.name;
+        currentChapter = 1;
+        maxChapter = nextBook.chapterCount;
+        updateChapterSelector();
+        updateBookHighlight();
+        loadChapter();
+        return true;
+    }
+    return false;
+}
+
+// Navigate to previous book
+function goToPreviousBook() {
+    const currentIndex = bibleBooks.findIndex(b => b.name === currentBook);
+    if (currentIndex > 0) {
+        const prevBook = bibleBooks[currentIndex - 1];
+        currentBook = prevBook.name;
+        currentChapter = prevBook.chapterCount; // Go to last chapter of previous book
+        maxChapter = prevBook.chapterCount;
+        updateChapterSelector();
+        updateBookHighlight();
+        loadChapter();
+        return true;
+    }
+    return false;
+}
+
+// Update chapter selector dropdown
+function updateChapterSelector() {
+    chapterSelect.innerHTML = '';
+    for (let i = 1; i <= maxChapter; i++) {
+        const option = document.createElement('option');
+        option.value = i;
+        option.textContent = `Chapter ${i}`;
+        chapterSelect.appendChild(option);
+    }
+    chapterSelect.value = currentChapter;
+    chapterSelector.classList.remove('hidden');
+}
+
 // Setup event listeners
 function setupEventListeners() {
     prevChapterBtn.addEventListener('click', () => {
         if (currentChapter > 1) {
             currentChapter--;
             loadChapter();
+        } else {
+            // Go to previous book if at chapter 1
+            goToPreviousBook();
         }
     });
     
@@ -526,6 +575,9 @@ function setupEventListeners() {
         if (currentChapter < maxChapter) {
             currentChapter++;
             loadChapter();
+        } else {
+            // Go to next book if at last chapter
+            goToNextBook();
         }
     });
     
@@ -632,14 +684,71 @@ function setupEventListeners() {
     // Keyboard navigation
     document.addEventListener('keydown', (e) => {
         if (e.key === 'ArrowLeft' && !prevChapterBtn.disabled) {
-            currentChapter--;
-            loadChapter();
+            if (currentChapter > 1) {
+                currentChapter--;
+                loadChapter();
+            } else {
+                goToPreviousBook();
+            }
         } else if (e.key === 'ArrowRight' && !nextChapterBtn.disabled) {
-            currentChapter++;
-            loadChapter();
+            if (currentChapter < maxChapter) {
+                currentChapter++;
+                loadChapter();
+            } else {
+                goToNextBook();
+            }
         }
     });
+    
+    // Touch/swipe navigation for mobile
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let touchEndX = 0;
+    let touchEndY = 0;
+    
+    const handleSwipe = () => {
+        const diffX = touchEndX - touchStartX;
+        const diffY = touchEndY - touchStartY;
+        const minSwipeDistance = 50;
+        
+        // Only trigger if horizontal swipe is greater than vertical (to avoid interfering with scroll)
+        if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > minSwipeDistance) {
+            if (diffX > 0) {
+                // Swipe right - go to previous chapter
+                if (!prevChapterBtn.disabled) {
+                    if (currentChapter > 1) {
+                        currentChapter--;
+                        loadChapter();
+                    } else {
+                        goToPreviousBook();
+                    }
+                }
+            } else {
+                // Swipe left - go to next chapter
+                if (!nextChapterBtn.disabled) {
+                    if (currentChapter < maxChapter) {
+                        currentChapter++;
+                        loadChapter();
+                    } else {
+                        goToNextBook();
+                    }
+                }
+            }
+        }
+    };
+    
+    versesContainer.addEventListener('touchstart', (e) => {
+        touchStartX = e.changedTouches[0].screenX;
+        touchStartY = e.changedTouches[0].screenY;
+    }, { passive: true });
+    
+    versesContainer.addEventListener('touchend', (e) => {
+        touchEndX = e.changedTouches[0].screenX;
+        touchEndY = e.changedTouches[0].screenY;
+        handleSwipe();
+    }, { passive: true });
 }
 
 // Start the application
 init();
+

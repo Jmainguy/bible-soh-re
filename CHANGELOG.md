@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.2](https://github.com/Jmainguy/bible-soh-re/compare/v1.2.1...v1.2.2) (2025-12-06)
+
+
+### Bug Fixes
+
+* easier scrolling for mobile ([5b8596f](https://github.com/Jmainguy/bible-soh-re/commit/5b8596f4dc391a3fbec73a0c328cc26190ec005c))
+
 ## [1.2.1](https://github.com/Jmainguy/bible-soh-re/compare/v1.2.0...v1.2.1) (2025-12-06)
 
 

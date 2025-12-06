@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.5](https://github.com/Jmainguy/bible-soh-re/compare/v1.2.4...v1.2.5) (2025-12-06)
+
+
+### Bug Fixes
+
+* &lt;titles&gt; in emtv now display properly ([e23208e](https://github.com/Jmainguy/bible-soh-re/commit/e23208eeb941a2a09b8f183446513f244f5d4e25))
+
 ## [1.2.4](https://github.com/Jmainguy/bible-soh-re/compare/v1.2.3...v1.2.4) (2025-12-06)
 
 

@@ -1,0 +1,10 @@
+defaultBaseImage: cgr.dev/chainguard/static:latest
+builds:
+  - id: bible-soh-re
+    main: .
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w

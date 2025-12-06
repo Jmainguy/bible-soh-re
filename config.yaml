@@ -1,0 +1,40 @@
+translations:
+  - name: nasb
+    fullName: NASB
+    description: New American Standard Bible
+    ftp:
+      host: ftp.crosswire.org
+      port: 21
+      user: anonymous
+      password: password
+      directory: /pub/sword/lockmanraw/modules/texts/ztext/nasb
+    
+  - name: leb
+    fullName: LEB
+    description: Lexham English Bible
+    ftp:
+      host: ftp.crosswire.org
+      port: 21
+      user: anonymous
+      password: password
+      directory: /pub/sword/raw/modules/texts/ztext/leb
+
+  - name: kjv
+    fullName: KJV
+    description: King James Version
+    ftp:
+      host: ftp.crosswire.org
+      port: 21
+      user: anonymous
+      password: password
+      directory: /pub/sword/raw/modules/texts/ztext/kjv
+
+  - name: mkjv
+    fullName: MKJV
+    description: Modern King James Version
+    ftp:
+      host: ftp.crosswire.org
+      port: 21
+      user: anonymous
+      password: password
+      directory: /pub/sword/raw/modules/texts/ztext/mkjv

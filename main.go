@@ -296,6 +296,7 @@ var tagPattern = regexp.MustCompile(`<[^>]+>`)
 var sectionTitlePattern = regexp.MustCompile(`<title[^>]*(?:subType="x-preverse"|type="x-s")[^>]*>([^<]+)</title>`)
 var descriptionTitlePattern = regexp.MustCompile(`<title[^>]*type="x-description"[^>]*>([^<]+)</title>`)
 var parallelTitlePattern = regexp.MustCompile(`<title[^>]*type="parallel"[^>]*>(.*?)</title>`)
+var genericTitlePattern = regexp.MustCompile(`<title>([^<]+)</title>`)
 var crossRefPattern = regexp.MustCompile(`<note[^>]*type="crossReference"[^>]*>(.*?)</note>`)
 var crossRefWithMarkerPattern = regexp.MustCompile(`<note\s+n="([^"]+)"[^>]*type="crossReference"[^>]*>(.*?)</note>`)
 var explanationPattern = regexp.MustCompile(`<note[^>]*(?:type="explanation"|placement="foot")[^>]*>(.*?)</note>`)
@@ -348,6 +349,13 @@ func parseVerseData(text string) map[string]interface{} {
 	// Extract section title (appears before verse) - works for both NASB and LEB
 	if match := sectionTitlePattern.FindStringSubmatch(text); len(match) > 1 {
 		result["sectionTitle"] = strings.TrimSpace(match[1])
+	}
+
+	// Extract generic title (EMTV) - simple <title> tags without attributes
+	if _, exists := result["sectionTitle"]; !exists {
+		if match := genericTitlePattern.FindStringSubmatch(text); len(match) > 1 {
+			result["sectionTitle"] = strings.TrimSpace(match[1])
+		}
 	}
 
 	// Extract chapter description (AKJV) - appears at beginning of chapter
@@ -539,6 +547,7 @@ func parseVerseData(text string) map[string]interface{} {
 	cleanedText = sectionTitlePattern.ReplaceAllString(cleanedText, "")
 	cleanedText = descriptionTitlePattern.ReplaceAllString(cleanedText, "")
 	cleanedText = parallelTitlePattern.ReplaceAllString(cleanedText, "")
+	cleanedText = genericTitlePattern.ReplaceAllString(cleanedText, "")
 
 	// Replace catch words in study notes with markers
 	// We need to do this before removing the study notes themselves

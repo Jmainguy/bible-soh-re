@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.0.2](https://github.com/Jmainguy/bible-soh-re/compare/v1.0.1...v1.0.2) (2025-12-06)
+
+
+### Bug Fixes
+
+* make / the homepage ([02d00f3](https://github.com/Jmainguy/bible-soh-re/commit/02d00f3590e2df80e7fa60d02754d02951660a5c))
+
 ## [1.0.1](https://github.com/Jmainguy/bible-soh-re/compare/v1.0.0...v1.0.1) (2025-12-06)
 
 

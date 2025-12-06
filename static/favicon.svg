@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Sky background -->
+  <rect width="100" height="100" fill="#1e3a8a"/>
+  
+  <!-- Green hill -->
+  <ellipse cx="50" cy="85" rx="55" ry="25" fill="#22c55e"/>
+  
+  <!-- Center cross (tallest) -->
+  <rect x="47" y="35" width="6" height="35" fill="#78350f"/>
+  <rect x="40" y="45" width="20" height="6" fill="#78350f"/>
+  
+  <!-- Left cross (smaller) -->
+  <rect x="22" y="45" width="4" height="25" fill="#78350f"/>
+  <rect x="18" y="52" width="12" height="4" fill="#78350f"/>
+  
+  <!-- Right cross (smaller) -->
+  <rect x="74" y="45" width="4" height="25" fill="#78350f"/>
+  <rect x="70" y="52" width="12" height="4" fill="#78350f"/>
+</svg>

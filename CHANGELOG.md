@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.0](https://github.com/Jmainguy/bible-soh-re/compare/v1.1.2...v1.2.0) (2025-12-06)
+
+
+### Features
+
+* add akjv ([94d6a8c](https://github.com/Jmainguy/bible-soh-re/commit/94d6a8cc20902b5e0bbe933647319fae47cb94ca))
+* add more translations ([d94c05c](https://github.com/Jmainguy/bible-soh-re/commit/d94c05c764b052b1e40fa7ff38cb154f98978e29))
+
 ## [1.1.2](https://github.com/Jmainguy/bible-soh-re/compare/v1.1.1...v1.1.2) (2025-12-06)
 
 

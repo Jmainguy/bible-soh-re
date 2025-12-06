@@ -59,3 +59,13 @@ translations:
       user: anonymous
       password: password
       directory: /pub/sword/raw/modules/texts/ztext/emtv
+
+  - name: akjv
+    fullName: AKJV
+    description: American King James Version
+    ftp:
+      host: ftp.crosswire.org
+      port: 21
+      user: anonymous
+      password: password
+      directory: /pub/sword/raw/modules/texts/ztext/akjv

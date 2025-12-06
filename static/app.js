@@ -305,21 +305,18 @@ function renderVerses(verses) {
     chapterHeading.textContent = `Chapter ${currentChapter}`;
     versesContainer.appendChild(chapterHeading);
     
+    // Check if first verse has an intro note (chapter summary/description)
+    if (verses.length > 0 && verses[0].introNote) {
+        const summaryDiv = document.createElement('div');
+        summaryDiv.className = 'chapter-summary text-gray-600 italic mb-6 pb-4 border-b border-gray-300';
+        summaryDiv.textContent = verses[0].introNote;
+        versesContainer.appendChild(summaryDiv);
+    }
+    
     const container = document.createElement('div');
     container.className = 'verse-container';
     if (!showReferences) {
         container.classList.add('hide-references');
-    }
-    
-    // Check if first verse has an intro note
-    if (verses.length > 0 && verses[0].introNote) {
-        const introDiv = document.createElement('div');
-        introDiv.className = 'intro-note bg-blue-50 border-l-4 border-blue-500 p-4 mb-6 text-sm';
-        introDiv.innerHTML = `
-            <div class="font-semibold text-blue-900 mb-2">Translator's Note</div>
-            <div class="text-gray-700 whitespace-pre-line">${escapeHtml(verses[0].introNote)}</div>
-        `;
-        container.appendChild(introDiv);
     }
     
     verses.forEach((verseData) => {

@@ -820,7 +820,7 @@ function setupEventListeners() {
         const diffX = touchEndX - touchStartX;
         const diffY = touchEndY - touchStartY;
         const minSwipeDistance = 50;
-        const maxVerticalMovement = 30; // Maximum vertical movement allowed for horizontal swipe
+        const maxVerticalMovement = 80; // Maximum vertical movement allowed for horizontal swipe
         
         // Only trigger if horizontal swipe is greater than vertical (to avoid interfering with scroll)
         // AND vertical movement is minimal (to prevent triggering during scrolling)

@@ -981,9 +981,70 @@ func main() {
 		fmt.Printf("%s\n", rawText)
 		return
 	} // Setup HTTP routes
+
+	// Initialize database
+	db, err := NewDatabase("bible.db")
+	if err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Printf("Error closing database: %v", err)
+		}
+	}()
+
+	// Initialize authentication handler
+	authHandler := NewAuthHandler(db, &config.Auth)
+
+	// Auth routes
+	http.HandleFunc("/auth/register", authHandler.handleRegister)
+	http.HandleFunc("/auth/login", authHandler.handleLogin)
+	http.HandleFunc("/auth/logout", authHandler.handleLogout)
+	http.HandleFunc("/auth/google", authHandler.handleGoogleLogin)
+	http.HandleFunc("/auth/google/callback", authHandler.handleGoogleCallback)
+	http.HandleFunc("/auth/github", authHandler.handleGitHubLogin)
+	http.HandleFunc("/auth/github/callback", authHandler.handleGitHubCallback)
+	http.HandleFunc("/api/auth/status", authHandler.handleGetUserInfo) // Auth status check
+	http.HandleFunc("/api/auth/logout", authHandler.handleLogout)      // API version of logout
+	http.HandleFunc("/api/user", authHandler.handleGetUserInfo)
+	http.HandleFunc("/api/reading-position", authHandler.handleGetReadingPosition)
+	http.HandleFunc("/api/save-reading-position", authHandler.handleSaveReadingPosition)
+
+	// RESTful group management routes
+	http.HandleFunc("/api/groups/", authHandler.handleGroupsRESTful)
+
+	// Logo upload
+	http.HandleFunc("/api/upload/logo", authHandler.handleUploadLogo)
+
+	// Study plans routes
+	http.HandleFunc("/api/study-plans/create", authHandler.handleCreateStudyPlan)
+	http.HandleFunc("/api/study-plans/list", authHandler.handleGetGroupStudyPlans)
+	http.HandleFunc("/api/study-plans/update", authHandler.handleUpdateStudyPlan)
+	http.HandleFunc("/api/study-plans/delete", authHandler.handleDeleteStudyPlan)
+
+	// RESTful notes routes
+	http.HandleFunc("/api/notes/", authHandler.handleNotesRESTful)
+
+	// Comments routes
+	http.HandleFunc("/api/comments/create", authHandler.handleCreateComment)
+	http.HandleFunc("/api/comments/list", authHandler.handleGetComments)
+	http.HandleFunc("/api/comments/delete", authHandler.handleDeleteComment)
+
+	// API routes
 	http.HandleFunc("/api/translations", handleTranslations)
 	http.HandleFunc("/api/books", handleBooks)
 	http.HandleFunc("/api/chapter", handleChapter)
+
+	// Serve static files
+	http.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "static/login.html")
+	})
+	http.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "static/register.html")
+	})
+
+	// Serve uploaded files
+	http.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("static/uploads"))))
 
 	// Serve static files from embedded filesystem at root
 	staticFS, err := fs.Sub(staticFiles, "static")

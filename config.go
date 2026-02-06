@@ -18,6 +18,7 @@ var embeddedConfig []byte
 // Config represents the configuration file structure
 type Config struct {
 	Translations []TranslationConfig `yaml:"translations"`
+	Auth         AuthConfig          `yaml:"auth"`
 }
 
 // TranslationConfig represents a single translation configuration

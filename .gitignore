@@ -2,3 +2,6 @@ translations
 pysword
 bible-soh-re
 *.conf
+bible.db
+bible.db-shm
+bible.db-wal

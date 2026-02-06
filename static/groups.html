@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Study Groups - Bible Reader</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,600;0,700;1,400&family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #f5f1e8;
+            font-family: 'EB Garamond', 'Crimson Text', Georgia, serif;
+        }
+        .bible-page {
+            background-color: #fffef9;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1), inset 0 0 100px rgba(139,69,19,0.02);
+        }
+        .page-title {
+            font-family: 'EB Garamond', Georgia, serif;
+            color: #5d4e37;
+            letter-spacing: 0.025em;
+        }
+        .tab-btn {
+            font-family: 'EB Garamond', Georgia, serif;
+            transition: all 0.2s;
+        }
+        .tab-btn.active {
+            color: #8b4513;
+            border-bottom-color: #8b4513;
+        }
+        .group-card {
+            background-color: #fffef9;
+            border: 1px solid #e5dcc8;
+            transition: all 0.3s;
+        }
+        .group-card:hover {
+            box-shadow: 0 4px 12px rgba(139, 69, 19, 0.15);
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #8b4513 0%, #654321 100%);
+            color: #fffef9;
+            transition: all 0.2s;
+        }
+        .btn-primary:hover {
+            box-shadow: 0 4px 12px rgba(139, 69, 19, 0.3);
+            transform: translateY(-1px);
+        }
+        .btn-secondary {
+            background-color: #e5dcc8;
+            color: #5d4e37;
+        }
+        .btn-secondary:hover {
+            background-color: #d4cbb8;
+        }
+        .modal-overlay {
+            background-color: rgba(93, 78, 55, 0.5);
+        }
+    </style>
+</head>
+<body>
+    <div class="min-h-screen">
+        <!-- Header -->
+        <header class="bg-gradient-to-r from-blue-800 to-blue-900 text-white shadow-lg">
+            <div class="container mx-auto px-4 py-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h1 class="text-3xl font-bold" style="font-family: 'EB Garamond', Georgia, serif;">Study Groups</h1>
+                        <p class="text-blue-200 mt-1">Collaborative Bible Study</p>
+                    </div>
+                    <div class="flex gap-3">
+                        <a href="/" class="px-4 py-2 bg-blue-700 hover:bg-blue-600 rounded-lg transition">
+                            ← Back to Bible
+                        </a>
+                        <button id="logoutBtn" class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg transition">
+                            Logout
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="container mx-auto px-4 py-8 max-w-6xl">
+            <!-- Tabs -->
+            <div class="bible-page rounded-lg mb-6">
+                <div class="flex gap-2 px-6 pt-6 border-b border-gray-200">
+                    <button id="myGroupsTab" class="tab-btn active px-6 py-3 font-medium border-b-2 border-transparent text-lg">
+                        My Groups
+                    </button>
+                    <button id="invitesTab" class="tab-btn px-6 py-3 font-medium border-b-2 border-transparent text-gray-600 hover:text-gray-900 text-lg">
+                        Invites
+                    </button>
+                </div>
+
+                <!-- My Groups View -->
+                <div id="myGroupsView" class="p-6">
+                    <!-- Create Group Button -->
+                    <div class="mb-6">
+                        <button id="createGroupBtn" class="btn-primary px-6 py-3 rounded-lg font-medium">
+                            + Create New Group
+                        </button>
+                    </div>
+
+                    <!-- Groups List -->
+                    <div id="groupsList" class="space-y-4">
+                        <!-- Groups will be inserted here -->
+                    </div>
+                </div>
+
+                <!-- Invites View -->
+                <div id="invitesView" class="hidden p-6">
+                    <div id="invitesList" class="space-y-4">
+                        <!-- Invites will be inserted here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Group Modal -->
+    <div id="createGroupModal" class="fixed inset-0 modal-overlay hidden items-center justify-center z-50">
+        <div class="bible-page rounded-xl p-8 max-w-2xl w-full mx-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <h2 class="page-title text-2xl font-bold mb-6">
+                Create Study Group
+            </h2>
+            <form id="createGroupForm">
+                <div class="mb-4">
+                    <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Group Name *</label>
+                    <input type="text" id="groupName" required 
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                           style="background-color: #fffef9;"
+                           placeholder="e.g., Tuesday Night Bible Study">
+                </div>
+                
+                <!-- Logo Upload -->
+                <div class="mb-4">
+                    <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Group Logo (optional)</label>
+                    <input type="file" id="groupLogo" accept="image/*" 
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                           style="background-color: #fffef9;">
+                    <div id="logoPreview" class="mt-2 hidden">
+                        <img id="logoPreviewImg" class="w-24 h-24 object-cover rounded-lg border border-gray-300">
+                    </div>
+                    <p class="text-xs mt-1" style="color: #8b7355;">Upload an image to represent your study group</p>
+                </div>
+                
+                <!-- Invite Members -->
+                <div class="mb-4">
+                    <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Invite Members (optional)</label>
+                    <div id="emailInputs" class="space-y-2">
+                        <input type="email" class="email-input w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                               style="background-color: #fffef9;"
+                               placeholder="Email address">
+                    </div>
+                    <button type="button" id="addEmailBtn" class="mt-2 text-sm font-medium" style="color: #8b4513;">
+                        + Add another email
+                    </button>
+                    <p class="text-xs mt-1" style="color: #8b7355;">Invite members by email - they'll receive an invitation to join</p>
+                </div>
+                
+                <div class="flex gap-3 mt-6">
+                    <button type="submit" class="flex-1 btn-primary px-6 py-3 rounded-lg font-medium">
+                        Create Group
+                    </button>
+                    <button type="button" id="cancelCreateBtn" class="flex-1 btn-secondary px-6 py-3 rounded-lg font-medium">
+                        Cancel
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Message Modal -->
+    <div id="messageModal" class="fixed inset-0 modal-overlay hidden items-center justify-center z-50">
+        <div class="bible-page rounded-xl p-8 max-w-md w-full mx-4 shadow-2xl">
+            <h2 id="messageTitle" class="page-title text-2xl font-bold mb-4">
+                Message
+            </h2>
+            <p id="messageText" class="mb-6" style="color: #5d4e37;">
+            </p>
+            <button id="closeMessageBtn" class="w-full btn-primary px-6 py-3 rounded-lg font-medium">
+                OK
+            </button>
+        </div>
+    </div>
+
+    <!-- Invite Member Modal -->
+    <div id="inviteMemberModal" class="fixed inset-0 modal-overlay hidden items-center justify-center z-50">
+        <div class="bible-page rounded-xl p-8 max-w-md w-full mx-4 shadow-2xl">
+            <h2 class="page-title text-2xl font-bold mb-6">
+                Invite Member
+            </h2>
+            <form id="inviteMemberForm">
+                <input type="hidden" id="inviteGroupId">
+                <div class="mb-6">
+                    <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Username or Email</label>
+                    <input type="text" id="inviteUsername" required 
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                           style="background-color: #fffef9;"
+                           placeholder="Enter username or email">
+                </div>
+                <div class="flex gap-3">
+                    <button type="submit" class="flex-1 btn-primary px-6 py-3 rounded-lg font-medium">
+                        Send Invite
+                    </button>
+                    <button type="button" id="cancelInviteBtn" class="flex-1 btn-secondary px-6 py-3 rounded-lg font-medium">
+                        Cancel
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Add Study Plan Modal -->
+    <div id="addStudyPlanModal" class="fixed inset-0 modal-overlay hidden items-center justify-center z-50">
+        <div class="bible-page rounded-xl p-8 max-w-lg w-full mx-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <h2 class="page-title text-2xl font-bold mb-6">
+                Add Study Plan Week
+            </h2>
+            <form id="addStudyPlanForm">
+                <input type="hidden" id="planGroupId">
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Week Number *</label>
+                        <input type="number" id="planWeekNumber" min="1" required
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                               style="background-color: #fffef9;">
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Start Date *</label>
+                            <input type="date" id="planStartDate" required
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                   style="background-color: #fffef9;">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">End Date *</label>
+                            <input type="date" id="planEndDate" required
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                   style="background-color: #fffef9;">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Book *</label>
+                        <input type="text" id="planBook" required
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                               style="background-color: #fffef9;"
+                               placeholder="e.g., Genesis">
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Start Chapter *</label>
+                            <input type="number" id="planStartChapter" min="1" required
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                   style="background-color: #fffef9;">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">End Chapter *</label>
+                            <input type="number" id="planEndChapter" min="1" required
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                   style="background-color: #fffef9;">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Description (optional)</label>
+                        <textarea id="planDescription" rows="3"
+                                  class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                  style="background-color: #fffef9;"
+                                  placeholder="Notes about this week's reading..."></textarea>
+                    </div>
+                </div>
+                <div class="flex gap-3 mt-6">
+                    <button type="submit" class="flex-1 btn-primary px-6 py-3 rounded-lg font-medium">
+                        Add Week
+                    </button>
+                    <button type="button" id="cancelPlanBtn" class="flex-1 btn-secondary px-6 py-3 rounded-lg font-medium">
+                        Cancel
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Message modal functions
+        function showMessage(title, message) {
+            document.getElementById('messageTitle').textContent = title;
+            document.getElementById('messageText').textContent = message;
+            const modal = document.getElementById('messageModal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function closeMessage() {
+            const modal = document.getElementById('messageModal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        document.getElementById('closeMessageBtn').addEventListener('click', closeMessage);
+
+        // Check authentication
+        let currentUserId = null;
+        
+        async function checkAuth() {
+            try {
+                const response = await fetch('/api/user');
+                if (!response.ok) {
+                    window.location.href = '/login.html';
+                    return;
+                }
+                const data = await response.json();
+                if (!data.authenticated) {
+                    window.location.href = '/login.html';
+                    return;
+                }
+                currentUserId = data.id;
+            } catch (error) {
+                window.location.href = '/login.html';
+            }
+        }
+
+        // Logout
+        document.getElementById('logoutBtn').addEventListener('click', async () => {
+            await fetch('/api/auth/logout', { method: 'POST' });
+            window.location.href = '/login.html';
+        });
+
+        // Tab switching
+        const myGroupsTab = document.getElementById('myGroupsTab');
+        const invitesTab = document.getElementById('invitesTab');
+        const myGroupsView = document.getElementById('myGroupsView');
+        const invitesView = document.getElementById('invitesView');
+
+        myGroupsTab.addEventListener('click', () => {
+            myGroupsTab.classList.add('active');
+            invitesTab.classList.remove('active');
+            myGroupsView.classList.remove('hidden');
+            invitesView.classList.add('hidden');
+        });
+
+        invitesTab.addEventListener('click', () => {
+            invitesTab.classList.add('active');
+            myGroupsTab.classList.remove('active');
+            invitesView.classList.remove('hidden');
+            myGroupsView.classList.add('hidden');
+            loadInvites();
+        });
+
+        // Load groups
+        async function loadGroups() {
+            try {
+                const response = await fetch('/api/groups/list');
+                if (!response.ok) throw new Error('Failed to load groups');
+                const groups = await response.json();
+                
+                const groupsList = document.getElementById('groupsList');
+                if (!groups || groups.length === 0) {
+                    groupsList.innerHTML = '<p class="text-center py-12 text-lg" style="color: #8b7355;">No study groups yet. Create one to get started!</p>';
+                    return;
+                }
+
+                groupsList.innerHTML = groups.map(group => `
+                    <div class="group-card rounded-lg p-6">
+                        <div class="flex items-start gap-4 mb-4">
+                            ${group.logo_url ? 
+                                `<img src="${group.logo_url}" class="w-20 h-20 object-cover rounded-lg border-2 border-amber-200 flex-shrink-0" alt="${escapeHtml(group.name)} logo">` : 
+                                '<div class="w-20 h-20 bg-amber-100 rounded-lg flex items-center justify-center text-3xl flex-shrink-0">📖</div>'}
+                            <div class="flex-1 min-w-0">
+                                <h3 class="text-2xl font-bold mb-2" style="color: #5d4e37; font-family: 'EB Garamond', Georgia, serif;">${escapeHtml(group.name)}</h3>
+                                <p class="text-sm mt-2" style="color: #8b7355;">Created ${new Date(group.created_at).toLocaleDateString()}</p>
+                            </div>
+                            <button onclick="openInviteModal(${group.id})" 
+                                    class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium flex-shrink-0">
+                                + Invite
+                            </button>
+                        </div>
+                        <div class="flex gap-2 mb-3">
+                            <button onclick="loadMembers(${group.id})" class="text-blue-700 hover:text-blue-900 text-sm font-medium">
+                                👥 View Members
+                            </button>
+                            <span class="text-gray-400">•</span>
+                            <button onclick="loadStudyPlan(${group.id})" class="text-blue-700 hover:text-blue-900 text-sm font-medium">
+                                📅 Study Plan
+                            </button>
+                        </div>
+                        <div id="members-${group.id}" class="hidden"></div>
+                        <div id="studyplan-${group.id}" class="hidden"></div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Error loading groups:', error);
+                document.getElementById('groupsList').innerHTML = 
+                    '<p class="text-red-700 text-center py-8">Failed to load groups. Please try again.</p>';
+            }
+        }
+
+        // Load members for a group
+        async function loadMembers(groupId) {
+            const membersDiv = document.getElementById(`members-${groupId}`);
+            
+            // Toggle visibility
+            if (!membersDiv.classList.contains('hidden')) {
+                membersDiv.classList.add('hidden');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/groups/${groupId}/members`);
+                if (!response.ok) throw new Error('Failed to load members');
+                const members = await response.json();
+                
+                membersDiv.innerHTML = `
+                    <div class="pt-3 border-t mt-3" style="border-color: #e5dcc8;">
+                        <p class="text-sm font-medium mb-2" style="color: #5d4e37;">Members (${members.length}):</p>
+                        <div class="flex flex-wrap gap-2">
+                            ${members.map(m => `
+                                <span class="px-3 py-1 rounded-full text-sm" style="background-color: #e5dcc8; color: #5d4e37;">
+                                    ${escapeHtml(m.username)}${m.role === 'owner' ? ' (Owner)' : ''}${m.role === 'admin' ? ' (Admin)' : ''}
+                                </span>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+                membersDiv.classList.remove('hidden');
+            } catch (error) {
+                console.error('Error loading members:', error);
+            }
+        }
+        
+        // Load study plan for a group
+        async function loadStudyPlan(groupId) {
+            const planDiv = document.getElementById(`studyplan-${groupId}`);
+            
+            // Toggle visibility
+            if (!planDiv.classList.contains('hidden')) {
+                planDiv.classList.add('hidden');
+                return;
+            }
+            
+            try {
+                // Check if user is admin
+                const membersResponse = await fetch(`/api/groups/${groupId}/members`);
+                const members = await membersResponse.json();
+                const isAdmin = members.some(m => m.user_id === currentUserId && (m.role === 'admin' || m.role === 'owner'));
+                currentUserIsAdmin[groupId] = isAdmin;
+                
+                const response = await fetch(`/api/study-plans/list?group_id=${groupId}`);
+                if (!response.ok) throw new Error('Failed to load study plan');
+                const plans = await response.json();
+                
+                if (!plans || plans.length === 0) {
+                    planDiv.innerHTML = `
+                        <div class="pt-3 border-t mt-3" style="border-color: #e5dcc8;">
+                            <div class="flex justify-between items-center mb-2">
+                                <p class="text-sm" style="color: #8b7355;">No study plan yet for this group.</p>
+                                ${isAdmin ? `<button onclick="openAddPlanModal(${groupId})" class="px-3 py-1 bg-amber-700 text-white rounded text-xs hover:bg-amber-800">+ Add Week</button>` : ''}
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    planDiv.innerHTML = `
+                        <div class="pt-3 border-t mt-3" style="border-color: #e5dcc8;">
+                            <div class="flex justify-between items-center mb-3">
+                                <p class="text-sm font-medium" style="color: #5d4e37;">Weekly Reading Schedule:</p>
+                                ${isAdmin ? `<button onclick="openAddPlanModal(${groupId})" class="px-3 py-1 bg-amber-700 text-white rounded text-xs hover:bg-amber-800">+ Add Week</button>` : ''}
+                            </div>
+                            <div class="space-y-2">
+                                ${plans.map(plan => `
+                                    <div class="bg-amber-50 rounded-lg p-3 border border-amber-200">
+                                        <div class="flex justify-between items-start">
+                                            <div class="flex-1">
+                                                <p class="font-bold text-sm" style="color: #5d4e37;">Week ${plan.week_number}</p>
+                                                <p class="text-xs mt-1" style="color: #8b7355;">${plan.start_date} to ${plan.end_date}</p>
+                                                <p class="mt-2 font-medium" style="color: #654321;">${escapeHtml(plan.book)} ${plan.start_chapter}${plan.start_chapter !== plan.end_chapter ? `-${plan.end_chapter}` : ''}</p>
+                                                ${plan.description ? `<p class="text-xs mt-1" style="color: #8b7355;">${escapeHtml(plan.description)}</p>` : ''}
+                                            </div>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                planDiv.classList.remove('hidden');
+            } catch (error) {
+                console.error('Error loading study plan:', error);
+            }
+        }
+
+        // Load invites
+        async function loadInvites() {
+            try {
+                const response = await fetch('/api/groups/invites');
+                if (!response.ok) throw new Error('Failed to load invites');
+                const invites = await response.json();
+                
+                const invitesList = document.getElementById('invitesList');
+                if (!invites || invites.length === 0) {
+                    invitesList.innerHTML = '<p class="text-center py-12 text-lg" style="color: #8b7355;">No pending invites.</p>';
+                    return;
+                }
+
+                invitesList.innerHTML = invites.map(invite => `
+                    <div class="group-card rounded-lg p-6">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h3 class="text-xl font-bold" style="color: #5d4e37; font-family: 'EB Garamond', Georgia, serif;">${escapeHtml(invite.group_name)}</h3>
+                                <p class="text-sm mt-1" style="color: #8b7355;">Invited by ${escapeHtml(invite.invited_by_username)}</p>
+                                <p class="text-xs mt-1" style="color: #8b7355;">${new Date(invite.created_at).toLocaleDateString()}</p>
+                            </div>
+                            <div class="flex gap-2">
+                                <button onclick="acceptInvite(${invite.id})" 
+                                        class="px-4 py-2 bg-green-700 text-white rounded-lg hover:bg-green-800 transition font-medium">
+                                    Accept
+                                </button>
+                                <button onclick="declineInvite(${invite.id})" 
+                                        class="px-4 py-2 btn-secondary rounded-lg transition font-medium">
+                                    Decline
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Error loading invites:', error);
+                document.getElementById('invitesList').innerHTML = 
+                    '<p class="text-red-700 text-center py-8">Failed to load invites. Please try again.</p>';
+            }
+        }
+
+        // Accept invite
+        async function acceptInvite(inviteId) {
+            try {
+                const response = await fetch(`/api/groups/invites/${inviteId}/accept`, { method: 'POST' });
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(errorText || 'Failed to accept invite');
+                }
+                showMessage('Success', 'Invitation accepted successfully!');
+                loadInvites();
+                loadGroups();
+            } catch (error) {
+                console.error('Error accepting invite:', error);
+                showMessage('Error', 'Failed to accept invite: ' + error.message);
+            }
+        }
+
+        // Decline invite
+        async function declineInvite(inviteId) {
+            try {
+                const response = await fetch(`/api/groups/invites/${inviteId}/decline`, { method: 'POST' });
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(errorText || 'Failed to decline invite');
+                }
+                showMessage('Success', 'Invitation declined.');
+                loadInvites();
+            } catch (error) {
+                console.error('Error declining invite:', error);
+                showMessage('Error', 'Failed to decline invite: ' + error.message);
+            }
+        }
+
+        // Create group modal
+        const createGroupBtn = document.getElementById('createGroupBtn');
+        const createGroupModal = document.getElementById('createGroupModal');
+        const cancelCreateBtn = document.getElementById('cancelCreateBtn');
+        const createGroupForm = document.getElementById('createGroupForm');
+
+        let uploadedLogoURL = '';
+
+        createGroupBtn.addEventListener('click', () => {
+            createGroupModal.classList.remove('hidden');
+            createGroupModal.classList.add('flex');
+        });
+
+        cancelCreateBtn.addEventListener('click', () => {
+            createGroupModal.classList.add('hidden');
+            createGroupModal.classList.remove('flex');
+            createGroupForm.reset();
+            resetCreateGroupForm();
+        });
+        
+        // Add email input button
+        document.getElementById('addEmailBtn').addEventListener('click', () => {
+            const input = document.createElement('input');
+            input.type = 'email';
+            input.className = 'email-input w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent';
+            input.style.backgroundColor = '#fffef9';
+            input.placeholder = 'Email address';
+            document.getElementById('emailInputs').appendChild(input);
+        });
+        
+        // Logo preview and upload
+        document.getElementById('groupLogo').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            // Show preview
+            const preview = document.getElementById('logoPreview');
+            const previewImg = document.getElementById('logoPreviewImg');
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                previewImg.src = e.target.result;
+                preview.classList.remove('hidden');
+            };
+            reader.readAsDataURL(file);
+            
+            // Upload file
+            const formData = new FormData();
+            formData.append('logo', file);
+            
+            try {
+                const response = await fetch('/api/upload/logo', {
+                    method: 'POST',
+                    body: formData
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    uploadedLogoURL = data.url;
+                } else {
+                    showMessage('Error', 'Failed to upload logo');
+                }
+            } catch (error) {
+                console.error('Failed to upload logo:', error);
+                showMessage('Error', 'Failed to upload logo');
+            }
+        });
+        
+        function resetCreateGroupForm() {
+            document.getElementById('groupLogo').value = '';
+            document.getElementById('logoPreview').classList.add('hidden');
+            document.getElementById('emailInputs').innerHTML = '<input type="email" class="email-input w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent" style="background-color: #fffef9;" placeholder="Email address">';
+            uploadedLogoURL = '';
+        }
+
+        createGroupForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const name = document.getElementById('groupName').value.trim();
+            
+            if (!name) {
+                showMessage('Error', 'Please enter a group name');
+                return;
+            }
+            
+            // Collect email addresses
+            const emails = Array.from(document.querySelectorAll('.email-input'))
+                .map(input => input.value.trim())
+                .filter(email => email !== '');
+
+            try {
+                const response = await fetch('/api/groups/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        name: name,
+                        logo_url: uploadedLogoURL,
+                        invite_emails: emails
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(errorText || 'Failed to create group');
+                }
+                
+                createGroupModal.classList.add('hidden');
+                createGroupModal.classList.remove('flex');
+                createGroupForm.reset();
+                resetCreateGroupForm();
+                
+                const inviteMsg = emails.length > 0 ? ` Invitations sent to ${emails.length} email${emails.length > 1 ? 's' : ''}.` : '';
+                showMessage('Success', 'Group created successfully!' + inviteMsg);
+                loadGroups();
+            } catch (error) {
+                console.error('Error creating group:', error);
+                showMessage('Error', 'Failed to create group: ' + error.message);
+            }
+        });
+
+        // Invite member modal
+        const inviteMemberModal = document.getElementById('inviteMemberModal');
+        const cancelInviteBtn = document.getElementById('cancelInviteBtn');
+        const inviteMemberForm = document.getElementById('inviteMemberForm');
+
+        function openInviteModal(groupId) {
+            document.getElementById('inviteGroupId').value = groupId;
+            inviteMemberModal.classList.remove('hidden');
+            inviteMemberModal.classList.add('flex');
+        }
+
+        cancelInviteBtn.addEventListener('click', () => {
+            inviteMemberModal.classList.add('hidden');
+            inviteMemberModal.classList.remove('flex');
+            inviteMemberForm.reset();
+        });
+
+        inviteMemberForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const groupId = document.getElementById('inviteGroupId').value;
+            const username = document.getElementById('inviteUsername').value;
+
+            try {
+                const response = await fetch(`/api/groups/${groupId}/invite`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username })
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    let errorMsg;
+                    try {
+                        const errorData = JSON.parse(errorText);
+                        errorMsg = errorData.error || errorText;
+                    } catch {
+                        errorMsg = errorText;
+                    }
+                    throw new Error(errorMsg || 'Failed to send invite');
+                }
+                
+                inviteMemberModal.classList.add('hidden');
+                inviteMemberModal.classList.remove('flex');
+                inviteMemberForm.reset();
+                showMessage('Success', 'Invite sent successfully!');
+            } catch (error) {
+                console.error('Error sending invite:', error);
+                inviteMemberModal.classList.add('hidden');
+                inviteMemberModal.classList.remove('flex');
+                inviteMemberForm.reset();
+                showMessage('Error', error.message);
+            }
+        });
+
+        // Study plan modal
+        const addStudyPlanModal = document.getElementById('addStudyPlanModal');
+        const cancelPlanBtn = document.getElementById('cancelPlanBtn');
+        const addStudyPlanForm = document.getElementById('addStudyPlanForm');
+        
+        let currentPlanGroupId = null;
+        let currentUserIsAdmin = {};  // Track admin status per group
+
+        function openAddPlanModal(groupId) {
+            currentPlanGroupId = groupId;
+            document.getElementById('planGroupId').value = groupId;
+            addStudyPlanModal.classList.remove('hidden');
+            addStudyPlanModal.classList.add('flex');
+        }
+
+        cancelPlanBtn.addEventListener('click', () => {
+            addStudyPlanModal.classList.add('hidden');
+            addStudyPlanModal.classList.remove('flex');
+            addStudyPlanForm.reset();
+        });
+
+        addStudyPlanForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const data = {
+                group_id: parseInt(currentPlanGroupId),
+                week_number: parseInt(document.getElementById('planWeekNumber').value),
+                start_date: document.getElementById('planStartDate').value,
+                end_date: document.getElementById('planEndDate').value,
+                book: document.getElementById('planBook').value.trim(),
+                start_chapter: parseInt(document.getElementById('planStartChapter').value),
+                end_chapter: parseInt(document.getElementById('planEndChapter').value),
+                description: document.getElementById('planDescription').value.trim()
+            };
+
+            try {
+                const response = await fetch('/api/study-plans/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(errorText || 'Failed to add study plan');
+                }
+                
+                addStudyPlanModal.classList.add('hidden');
+                addStudyPlanModal.classList.remove('flex');
+                addStudyPlanForm.reset();
+                showMessage('Success', 'Study plan week added successfully!');
+                
+                // Reload the study plan
+                const planDiv = document.getElementById(`studyplan-${currentPlanGroupId}`);
+                planDiv.classList.add('hidden');
+                await loadStudyPlan(currentPlanGroupId);
+            } catch (error) {
+                console.error('Error adding study plan:', error);
+                addStudyPlanModal.classList.add('hidden');
+                addStudyPlanModal.classList.remove('flex');
+                addStudyPlanForm.reset();
+                showMessage('Error', 'Failed to add study plan: ' + error.message);
+            }
+        });
+
+        // Utility function
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Initialize
+        checkAuth();
+        loadGroups();
+    </script>
+</body>
+</html>

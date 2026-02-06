@@ -72,6 +72,9 @@ function scrollToVerse(verseNum) {
 
 // Initialize the application
 async function init() {
+    // Check authentication status
+    await checkAuthStatus();
+    
     // Hide sidebar on mobile by default
     if (window.innerWidth <= 1024) {
         sidebar.classList.add('collapsed');
@@ -104,7 +107,9 @@ async function init() {
     await loadBooks();
     setupEventListeners();
     
+    // Priority: URL params > saved position > default (Genesis 1)
     if (bookParam && chapterParam) {
+        // URL parameters have highest priority
         const book = bibleBooks.find(b => b.name.toLowerCase() === bookParam.toLowerCase());
         if (book) {
             currentBook = book.name;
@@ -121,17 +126,46 @@ async function init() {
             }
         }
     } else {
-        // Load Genesis 1 by default if no URL params
-        const genesis = bibleBooks.find(b => b.name === 'Genesis');
-        if (genesis) {
-            currentBook = 'Genesis';
-            currentChapter = 1;
-            maxChapter = genesis.chapterCount;
-            
-            updateChapterSelector();
-            
-            await loadChapter();
+        // Try to load saved position
+        const savedPosition = await loadSavedPosition();
+        
+        if (savedPosition) {
+            // Use saved position
+            const book = bibleBooks.find(b => b.name === savedPosition.book);
+            if (book && translationInfo[savedPosition.translation]) {
+                currentBook = savedPosition.book;
+                currentChapter = savedPosition.chapter;
+                maxChapter = book.chapterCount;
+                selectedTranslation = savedPosition.translation;
+                translationSelect.value = savedPosition.translation;
+                updateHeader();
+                
+                updateChapterSelector();
+                
+                await loadChapter();
+                console.log(`Restored reading position from ${savedPosition.source}: ${currentBook} ${currentChapter} (${selectedTranslation})`);
+            } else {
+                // Saved position is invalid, load default
+                loadDefaultPosition();
+            }
+        } else {
+            // No saved position, load default
+            loadDefaultPosition();
         }
+    }
+}
+
+// Load default position (Genesis 1)
+async function loadDefaultPosition() {
+    const genesis = bibleBooks.find(b => b.name === 'Genesis');
+    if (genesis) {
+        currentBook = 'Genesis';
+        currentChapter = 1;
+        maxChapter = genesis.chapterCount;
+        
+        updateChapterSelector();
+        
+        await loadChapter();
     }
 }
 
@@ -289,6 +323,12 @@ async function loadChapter() {
         
         // Update URL
         updateURL();
+        
+        // Save reading position
+        saveReadingPosition();
+        
+        // Load notes for this chapter (if user is authenticated)
+        loadNotes();
         
         // Scroll to top
         window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -886,6 +926,913 @@ function setupEventListeners() {
         touchEndY = e.changedTouches[0].screenY;
         handleSwipe();
     }, { passive: true });
+}
+
+// Save reading position to localStorage and server (if authenticated)
+function saveReadingPosition() {
+    if (!currentBook || !currentChapter || !selectedTranslation) return;
+    
+    const position = {
+        translation: selectedTranslation,
+        book: currentBook,
+        chapter: currentChapter
+    };
+    
+    // Save to localStorage for all users
+    try {
+        localStorage.setItem('bibleReadingPosition', JSON.stringify(position));
+    } catch (e) {
+        console.error('Failed to save to localStorage:', e);
+    }
+    
+    // Save to server for authenticated users
+    fetch('/api/save-reading-position', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(position)
+    }).catch(err => {
+        // Silently fail if user is not authenticated or server error
+        console.debug('Could not save to server:', err);
+    });
+}
+
+// Load saved reading position (returns position object or null)
+async function loadSavedPosition() {
+    try {
+        // First, try to get from server if authenticated
+        const response = await fetch('/api/reading-position');
+        const data = await response.json();
+        
+        if (data.authenticated && data.hasPosition) {
+            return {
+                translation: data.translation,
+                book: data.book,
+                chapter: data.chapter,
+                source: 'server'
+            };
+        }
+    } catch (err) {
+        console.debug('Could not load from server:', err);
+    }
+    
+    // Fall back to localStorage
+    try {
+        const saved = localStorage.getItem('bibleReadingPosition');
+        if (saved) {
+            const position = JSON.parse(saved);
+            return {
+                ...position,
+                source: 'localStorage'
+            };
+        }
+    } catch (e) {
+        console.error('Failed to load from localStorage:', e);
+    }
+    
+    return null;
+}
+
+// Check authentication status
+async function checkAuthStatus() {
+    try {
+        const response = await fetch('/api/user');
+        const data = await response.json();
+        
+        const userMenu = document.getElementById('userMenu');
+        const loginButton = document.getElementById('loginButton');
+        const userName = document.getElementById('userName');
+        const userEmail = document.getElementById('userEmail');
+        const userMenuButton = document.getElementById('userMenuButton');
+        const userDropdown = document.getElementById('userDropdown');
+        
+        if (data.authenticated) {
+            // Show user menu, hide login button
+            userMenu.classList.remove('hidden');
+            loginButton.classList.add('hidden');
+            userName.textContent = data.username;
+            userEmail.textContent = data.email;
+            currentUserId = data.id;
+            
+            // Setup dropdown toggle
+            userMenuButton.addEventListener('click', (e) => {
+                e.stopPropagation();
+                userDropdown.classList.toggle('hidden');
+            });
+            
+            // Close dropdown when clicking outside
+            document.addEventListener('click', (e) => {
+                if (!userMenu.contains(e.target)) {
+                    userDropdown.classList.add('hidden');
+                }
+            });
+            
+            // Initialize notes functionality for authenticated users
+            initializeNotes();
+        } else {
+            // Show login button, hide user menu
+            userMenu.classList.add('hidden');
+            loginButton.classList.remove('hidden');
+        }
+    } catch (error) {
+        console.error('Failed to check auth status:', error);
+        // On error, show login button
+        document.getElementById('userMenu').classList.add('hidden');
+        document.getElementById('loginButton').classList.remove('hidden');
+    }
+}
+
+// ============ NOTES FUNCTIONALITY ============
+
+let notesVisible = false;
+let currentNoteType = 'personal'; // 'personal' or 'group'
+let selectedGroupId = null;
+let userGroups = [];
+let currentUserId = null;
+let notesPollingInterval = null;
+let currentNotesData = null; // Cache of current notes for comparison
+let openCommentsSections = new Set(); // Track which comment sections are open
+let commentsData = new Map(); // Cache of comments data for comparison
+
+// Initialize notes functionality
+function initializeNotes() {
+    const notesSection = document.getElementById('notesSection');
+    const toggleNotesBtn = document.getElementById('toggleNotesBtn');
+    const personalNotesTab = document.getElementById('personalNotesTab');
+    const groupNotesTab = document.getElementById('groupNotesTab');
+    const createPersonalNoteBtn = document.getElementById('createPersonalNoteBtn');
+    const createGroupNoteBtn = document.getElementById('createGroupNoteBtn');
+    const groupNoteSelector = document.getElementById('groupNoteSelector');
+    
+    // Show notes section and make notes visible by default for authenticated users
+    notesSection.classList.remove('hidden');
+    notesVisible = true;
+    toggleNotesBtn.textContent = 'Hide Notes';
+    document.getElementById('personalNotesView').classList.remove('hidden');
+    
+    // Start polling for authenticated users
+    startNotesPolling();
+    
+    // Toggle notes visibility
+    toggleNotesBtn.addEventListener('click', () => {
+        notesVisible = !notesVisible;
+        const personalNotesView = document.getElementById('personalNotesView');
+        const groupNotesView = document.getElementById('groupNotesView');
+        
+        if (notesVisible) {
+            personalNotesView.classList.remove('hidden');
+            toggleNotesBtn.textContent = 'Hide Notes';
+            if (currentBook && currentChapter) {
+                loadNotes();
+            }
+            startNotesPolling();
+        } else {
+            personalNotesView.classList.add('hidden');
+            groupNotesView.classList.add('hidden');
+            toggleNotesBtn.textContent = 'Show Notes';
+            stopNotesPolling();
+        }
+    });
+    
+    // Tab switching
+    personalNotesTab.addEventListener('click', () => {
+        currentNoteType = 'personal';
+        personalNotesTab.classList.add('border-amber-600', 'text-amber-700');
+        personalNotesTab.classList.remove('border-transparent', 'text-gray-600');
+        groupNotesTab.classList.remove('border-amber-600', 'text-amber-700');
+        groupNotesTab.classList.add('border-transparent', 'text-gray-600');
+        document.getElementById('personalNotesView').classList.remove('hidden');
+        document.getElementById('groupNotesView').classList.add('hidden');
+        if (currentBook && currentChapter) loadPersonalNotes();
+        restartNotesPolling();
+    });
+    
+    groupNotesTab.addEventListener('click', () => {
+        currentNoteType = 'group';
+        groupNotesTab.classList.add('border-amber-600', 'text-amber-700');
+        groupNotesTab.classList.remove('border-transparent', 'text-gray-600');
+        personalNotesTab.classList.remove('border-amber-600', 'text-amber-700');
+        personalNotesTab.classList.add('border-transparent', 'text-gray-600');
+        document.getElementById('groupNotesView').classList.remove('hidden');
+        document.getElementById('personalNotesView').classList.add('hidden');
+        loadUserGroups();
+        restartNotesPolling();
+    });
+    
+    // Create personal note
+    createPersonalNoteBtn.addEventListener('click', () => {
+        showCreateNoteDialog('personal');
+    });
+    
+    // Create group note
+    createGroupNoteBtn.addEventListener('click', () => {
+        if (selectedGroupId) {
+            showCreateNoteDialog('group', selectedGroupId);
+        }
+    });
+    
+    // Group selector change
+    groupNoteSelector.addEventListener('change', (e) => {
+        selectedGroupId = e.target.value ? parseInt(e.target.value) : null;
+        createGroupNoteBtn.disabled = !selectedGroupId;
+        
+        // Save to localStorage
+        if (selectedGroupId) {
+            localStorage.setItem('lastSelectedGroupId', selectedGroupId.toString());
+        } else {
+            localStorage.removeItem('lastSelectedGroupId');
+        }
+        
+        if (selectedGroupId && currentBook && currentChapter) {
+            loadGroupNotes(selectedGroupId);
+        }
+        restartNotesPolling();
+    });
+}
+
+// Start polling for notes updates
+function startNotesPolling() {
+    stopNotesPolling(); // Clear any existing interval
+    
+    // Start polling immediately and then every 2 seconds
+    pollNotesUpdates(); // First poll immediately
+    
+    notesPollingInterval = setInterval(() => {
+        if (notesVisible && currentBook && currentChapter) {
+            pollNotesUpdates();
+        }
+    }, 2000); // Poll every 2 seconds
+    
+    console.log('Started notes polling');
+}
+
+// Stop polling for notes updates
+function stopNotesPolling() {
+    if (notesPollingInterval) {
+        clearInterval(notesPollingInterval);
+        notesPollingInterval = null;
+        console.log('Stopped notes polling');
+    }
+}
+
+// Restart polling (when switching tabs or groups)
+function restartNotesPolling() {
+    if (notesVisible) {
+        startNotesPolling();
+    }
+}
+
+// Poll for notes updates
+async function pollNotesUpdates() {
+    try {
+        let response;
+        if (currentNoteType === 'personal') {
+            response = await fetch(`/api/notes/personal?book=${encodeURIComponent(currentBook)}&chapter=${currentChapter}`);
+        } else if (currentNoteType === 'group' && selectedGroupId) {
+            response = await fetch(`/api/notes/group?group_id=${selectedGroupId}&book=${encodeURIComponent(currentBook)}&chapter=${currentChapter}`);
+        } else {
+            return;
+        }
+        
+        if (!response.ok) return;
+        const notes = await response.json();
+        
+        // Compare with current notes to see if update is needed
+        const notesJson = JSON.stringify(notes);
+        if (notesJson !== currentNotesData) {
+            currentNotesData = notesJson;
+            const containerId = currentNoteType === 'personal' ? 'personalNotesList' : 'groupNotesList';
+            displayNotes(notes, containerId, currentUserId);
+        }
+        
+        // Also poll open comments
+        await pollOpenComments();
+    } catch (error) {
+        console.debug('Polling error:', error);
+    }
+}
+
+// Poll for comments updates
+async function pollOpenComments() {
+    for (const noteId of openCommentsSections) {
+        try {
+            const response = await fetch(`/api/notes/${noteId}/comments`);
+            if (!response.ok) continue;
+            const comments = await response.json();
+            
+            const commentsJson = JSON.stringify(comments);
+            const cachedData = commentsData.get(noteId);
+            
+            if (commentsJson !== cachedData) {
+                commentsData.set(noteId, commentsJson);
+                await updateCommentsDisplay(noteId, comments);
+            }
+        } catch (error) {
+            console.debug('Error polling comments:', error);
+        }
+    }
+}
+
+// Load notes (called when chapter changes)
+async function loadNotes() {
+    if (!notesVisible) return;
+    
+    currentNotesData = null; // Reset cache when loading new chapter
+    openCommentsSections.clear(); // Clear open comments when changing chapters
+    commentsData.clear();
+    if (currentNoteType === 'personal') {
+        await loadPersonalNotes();
+    } else if (currentNoteType === 'group' && selectedGroupId) {
+        await loadGroupNotes(selectedGroupId);
+    }
+    restartNotesPolling();
+}
+
+// Load personal notes
+async function loadPersonalNotes() {
+    if (!currentBook || !currentChapter) return;
+    
+    try {
+        const response = await fetch(`/api/notes/personal?book=${encodeURIComponent(currentBook)}&chapter=${currentChapter}`);
+        if (!response.ok) throw new Error('Failed to load notes');
+        const notes = await response.json();
+        currentNotesData = JSON.stringify(notes);
+        displayNotes(notes, 'personalNotesList', currentUserId);
+    } catch (error) {
+        console.error('Error loading personal notes:', error);
+    }
+}
+
+// Load group notes
+async function loadGroupNotes(groupId) {
+    if (!currentBook || !currentChapter) return;
+    
+    try {
+        const response = await fetch(`/api/notes/group?group_id=${groupId}&book=${encodeURIComponent(currentBook)}&chapter=${currentChapter}`);
+        if (!response.ok) throw new Error('Failed to load notes');
+        const notes = await response.json();
+        currentNotesData = JSON.stringify(notes);
+        displayNotes(notes, 'groupNotesList', currentUserId);
+    } catch (error) {
+        console.error('Error loading group notes:', error);
+    }
+}
+
+// Load user's groups for the dropdown
+async function loadUserGroups() {
+    try {
+        const response = await fetch('/api/groups/list');
+        if (!response.ok) throw new Error('Failed to load groups');
+        userGroups = await response.json();
+        
+        const selector = document.getElementById('groupNoteSelector');
+        selector.innerHTML = '<option value="">Select a study group...</option>' +
+            userGroups.map(g => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join('');
+        
+        // Restore last selected group from localStorage
+        const lastGroupId = localStorage.getItem('lastSelectedGroupId');
+        if (lastGroupId && userGroups.some(g => g.id.toString() === lastGroupId)) {
+            selector.value = lastGroupId;
+            selectedGroupId = parseInt(lastGroupId);
+            createGroupNoteBtn.disabled = false;
+            if (currentBook && currentChapter) {
+                loadGroupNotes(selectedGroupId);
+            }
+        }
+    } catch (error) {
+        console.error('Error loading groups:', error);
+    }
+}
+
+// Display notes in the list
+function displayNotes(notes, containerId, currentUserId) {
+    const container = document.getElementById(containerId);
+    
+    if (!notes || notes.length === 0) {
+        container.innerHTML = '<p class="text-gray-500 text-sm italic">No notes yet for this chapter.</p>';
+        return;
+    }
+    
+    container.innerHTML = notes.map(note => {
+        // Check if current user owns this note
+        const canEdit = currentUserId && note.user_id === currentUserId;
+        // Check if note is temporary (not yet saved to server)
+        const isTemp = String(note.id).startsWith('temp-');
+        // Escape content for use in onclick attribute - replace backticks and backslashes
+        const escapedContent = escapeHtml(note.content).replace(/\\/g, '\\\\').replace(/`/g, '\\`');
+        
+        return `
+        <div class="bg-white rounded-lg p-4 shadow-sm border border-gray-200 ${isTemp ? 'opacity-70' : ''}" id="note-${note.id}">
+            <div class="flex items-start justify-between mb-2">
+                <div class="flex-1">
+                    <p class="text-sm font-medium text-gray-700">
+                        ${escapeHtml(note.username)}
+                        ${isTemp ? '<span class="ml-2 text-xs text-amber-600">⏳ Saving...</span>' : ''}
+                    </p>
+                    <p class="text-xs text-gray-500">${new Date(note.created_at).toLocaleString()}</p>
+                </div>
+                ${canEdit && !isTemp ? `
+                    <div class="flex gap-2">
+                        <button onclick="editNote('${note.id}', \`${escapedContent}\`)"
+                                class="text-blue-600 hover:text-blue-800 text-xs">Edit</button>
+                        <button onclick="deleteNote('${note.id}')"
+                                class="text-red-600 hover:text-red-800 text-xs">Delete</button>
+                    </div>
+                ` : ''}
+            </div>
+            <p class="text-gray-800 whitespace-pre-wrap">${escapeHtml(note.content)}</p>
+            <div class="mt-3 pt-3 border-t border-gray-100">
+                <button onclick="toggleComments('${note.id}')" 
+                        class="text-sm text-blue-600 hover:text-blue-800" ${isTemp ? 'disabled' : ''}>
+                    💬 Comments
+                </button>
+                <div id="comments-${note.id}" class="hidden mt-3 space-y-2">
+                    <!-- Comments will be loaded here -->
+                </div>
+            </div>
+        </div>
+        `;
+    }).join('');
+}
+
+// Modal helper functions
+function showNoteEditor(title, initialContent, onSave) {
+    const modal = document.getElementById('noteEditorModal');
+    const titleEl = document.getElementById('noteEditorTitle');
+    const contentEl = document.getElementById('noteEditorContent');
+    const saveBtn = document.getElementById('noteEditorSave');
+    const cancelBtn = document.getElementById('noteEditorCancel');
+    
+    titleEl.textContent = title;
+    contentEl.value = initialContent || '';
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    contentEl.focus();
+    
+    const handleSave = () => {
+        const content = contentEl.value.trim();
+        if (content) {
+            onSave(content);
+        }
+        closeNoteEditor();
+    };
+    
+    const handleCancel = () => {
+        closeNoteEditor();
+    };
+    
+    const closeNoteEditor = () => {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        saveBtn.removeEventListener('click', handleSave);
+        cancelBtn.removeEventListener('click', handleCancel);
+    };
+    
+    saveBtn.addEventListener('click', handleSave);
+    cancelBtn.addEventListener('click', handleCancel);
+}
+
+function showDeleteConfirm(onConfirm) {
+    const modal = document.getElementById('deleteConfirmModal');
+    const yesBtn = document.getElementById('deleteConfirmYes');
+    const noBtn = document.getElementById('deleteConfirmNo');
+    
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    
+    const handleYes = () => {
+        onConfirm();
+        closeDeleteConfirm();
+    };
+    
+    const handleNo = () => {
+        closeDeleteConfirm();
+    };
+    
+    const closeDeleteConfirm = () => {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        yesBtn.removeEventListener('click', handleYes);
+        noBtn.removeEventListener('click', handleNo);
+    };
+    
+    yesBtn.addEventListener('click', handleYes);
+    noBtn.addEventListener('click', handleNo);
+}
+
+function showNoteMessage(title, message) {
+    const modal = document.getElementById('noteMessageModal');
+    const titleEl = document.getElementById('noteMessageTitle');
+    const messageEl = document.getElementById('noteMessageText');
+    const okBtn = document.getElementById('noteMessageOk');
+    
+    titleEl.textContent = title;
+    messageEl.textContent = message;
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    
+    const handleOk = () => {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        okBtn.removeEventListener('click', handleOk);
+    };
+    
+    okBtn.addEventListener('click', handleOk);
+}
+
+// Show create note dialog
+function showCreateNoteDialog(type, groupId = null) {
+    showNoteEditor('Create Note', '', (content) => {
+        createNote(content, type, groupId);
+    });
+}
+
+// Create a note
+async function createNote(content, type, groupId = null) {
+    if (!currentBook || !currentChapter) return;
+    
+    // Optimistic update - add note to UI immediately
+    const optimisticNote = {
+        id: 'temp-' + Date.now(),
+        user_id: currentUserId,
+        username: document.getElementById('userName').textContent,
+        content: content,
+        created_at: new Date().toISOString(),
+        book: currentBook,
+        chapter: currentChapter,
+        group_id: groupId
+    };
+    
+    addNoteToUI(optimisticNote);
+    
+    try {
+        const response = await fetch('/api/notes/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                book: currentBook,
+                chapter: currentChapter,
+                content: content,
+                group_id: groupId
+            })
+        });
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            removeNoteFromUI(optimisticNote.id);
+            throw new Error(errorText || 'Failed to create note');
+        }
+        
+        // Get the real note from server response
+        const realNote = await response.json();
+        
+        // Replace temp note with real note in UI
+        replaceNoteInUI(optimisticNote.id, realNote);
+        
+        // Update cache to include the new note
+        currentNotesData = null;
+    } catch (error) {
+        console.error('Error creating note:', error);
+        showNoteMessage('Error', 'Failed to create note: ' + error.message);
+    }
+}
+
+// Edit a note
+async function editNote(noteId, currentContent) {
+    // Prevent editing temporary notes
+    if (String(noteId).startsWith('temp-')) {
+        showNoteMessage('Please Wait', 'This note is still being saved. Please wait a moment and try again.');
+        return;
+    }
+    
+    showNoteEditor('Edit Note', currentContent, async (content) => {
+        if (content === currentContent) return;
+        
+        // Optimistic update - update UI immediately
+        updateNoteContentInUI(noteId, content);
+        
+        try {
+            const response = await fetch(`/api/notes/${noteId}/update`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: content })
+            });
+            
+            if (!response.ok) {
+                // Revert on error
+                updateNoteContentInUI(noteId, currentContent);
+                throw new Error('Failed to update note');
+            }
+            
+            // Force refresh to get updated timestamp
+            currentNotesData = null;
+        } catch (error) {
+            console.error('Error updating note:', error);
+            showNoteMessage('Error', 'Failed to update note');
+        }
+    });
+}
+
+// Delete a note
+async function deleteNote(noteId) {
+    // Prevent deleting temporary notes
+    if (String(noteId).startsWith('temp-')) {
+        showNoteMessage('Please Wait', 'This note is still being saved. Please wait a moment and try again.');
+        return;
+    }
+    
+    showDeleteConfirm(async () => {
+        // Optimistic update - remove from UI immediately
+        removeNoteFromUI(noteId);
+        
+        try {
+            const response = await fetch(`/api/notes/${noteId}/delete`, { method: 'DELETE' });
+            if (!response.ok) {
+                // On error, force reload to restore
+                currentNotesData = null;
+                await loadNotes();
+                throw new Error('Failed to delete note');
+            }
+            
+            // Update cache
+            currentNotesData = null;
+        } catch (error) {
+            console.error('Error deleting note:', error);
+            showNoteMessage('Error', 'Failed to delete note');
+        }
+    });
+}
+
+// Toggle comments visibility
+async function toggleComments(noteId) {
+    // Prevent opening comments on temporary notes
+    if (String(noteId).startsWith('temp-')) {
+        return;
+    }
+    
+    const commentsDiv = document.getElementById(`comments-${noteId}`);
+    
+    if (commentsDiv.classList.contains('hidden')) {
+        commentsDiv.classList.remove('hidden');
+        openCommentsSections.add(noteId);
+        await loadComments(noteId);
+    } else {
+        commentsDiv.classList.add('hidden');
+        openCommentsSections.delete(noteId);
+        commentsData.delete(noteId);
+    }
+}
+
+// Load comments for a note
+async function loadComments(noteId) {
+    try {
+        const response = await fetch(`/api/notes/${noteId}/comments`);
+        if (!response.ok) throw new Error('Failed to load comments');
+        const comments = await response.json();
+        
+        commentsData.set(noteId, JSON.stringify(comments));
+        await updateCommentsDisplay(noteId, comments);
+    } catch (error) {
+        console.error('Error loading comments:', error);
+    }
+}
+
+// Update comments display
+async function updateCommentsDisplay(noteId, comments) {
+    const commentsDiv = document.getElementById(`comments-${noteId}`);
+    if (!commentsDiv) return;
+    
+    commentsDiv.innerHTML = `
+        <div class="bg-gray-50 rounded p-3 space-y-2">
+            ${comments.length === 0 ? '<p class="text-gray-500 text-xs italic">No comments yet.</p>' : ''}
+            ${comments.map(c => `
+                <div class="bg-white rounded p-2 text-sm" id="comment-${c.id}">
+                    <div class="flex items-start justify-between mb-1">
+                        <span class="font-medium text-xs text-gray-700">${escapeHtml(c.username)}</span>
+                        <span class="text-xs text-gray-500">${new Date(c.created_at).toLocaleString()}</span>
+                    </div>
+                    <p class="text-gray-800 text-xs">${escapeHtml(c.content)}</p>
+                </div>
+            `).join('')}
+            <div class="mt-2">
+                <button onclick="addComment(${noteId})" 
+                        class="text-xs text-blue-600 hover:text-blue-800">
+                    + Add Comment
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+// Add a comment
+async function addComment(noteId) {
+    showNoteEditor('Add Comment', '', async (content) => {
+        // Optimistic update - add comment to UI immediately
+        const optimisticComment = {
+            id: 'temp-' + Date.now(),
+            note_id: noteId,
+            user_id: currentUserId,
+            username: document.getElementById('userName').textContent,
+            content: content,
+            created_at: new Date().toISOString()
+        };
+        
+        await addCommentToUI(noteId, optimisticComment);
+        
+        try {
+            const response = await fetch('/api/comments/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    note_id: noteId,
+                    content: content
+                })
+            });
+            
+            if (!response.ok) {
+                // Revert on error
+                commentsData.delete(noteId);
+                await loadComments(noteId);
+                throw new Error('Failed to create comment');
+            }
+            
+            // Force refresh to get real comment
+            commentsData.delete(noteId);
+            await loadComments(noteId);
+        } catch (error) {
+            console.error('Error creating comment:', error);
+            showNoteMessage('Error', 'Failed to create comment');
+        }
+    });
+}
+
+// Optimistic UI update helpers
+function addNoteToUI(note) {
+    const containerId = currentNoteType === 'personal' ? 'personalNotesList' : 'groupNotesList';
+    const container = document.getElementById(containerId);
+    
+    const canEdit = currentUserId && note.user_id === currentUserId;
+    // Check if note is temporary (not yet saved to server)
+    const isTemp = String(note.id).startsWith('temp-');
+    // Escape content for use in onclick attribute - replace backticks and backslashes
+    const escapedContent = escapeHtml(note.content).replace(/\\/g, '\\\\').replace(/`/g, '\\`');
+    
+    const noteDiv = document.createElement('div');
+    noteDiv.className = `bg-white rounded-lg p-4 shadow-sm border border-gray-200 ${isTemp ? 'opacity-70' : ''}`;
+    noteDiv.id = `note-${note.id}`;
+    noteDiv.innerHTML = `
+        <div class="flex items-start justify-between mb-2">
+            <div class="flex-1">
+                <p class="text-sm font-medium text-gray-700">
+                    ${escapeHtml(note.username)}
+                    ${isTemp ? '<span class="ml-2 text-xs text-amber-600">⏳ Saving...</span>' : ''}
+                </p>
+                <p class="text-xs text-gray-500">${new Date(note.created_at).toLocaleString()}</p>
+            </div>
+            ${canEdit && !isTemp ? `
+                <div class="flex gap-2">
+                    <button onclick="editNote('${note.id}', \`${escapedContent}\`)"
+                            class="text-blue-600 hover:text-blue-800 text-xs">Edit</button>
+                    <button onclick="deleteNote('${note.id}')"
+                            class="text-red-600 hover:text-red-800 text-xs">Delete</button>
+                </div>
+            ` : ''}
+        </div>
+        <p class="text-gray-800 whitespace-pre-wrap">${escapeHtml(note.content)}</p>
+        <div class="mt-3 pt-3 border-t border-gray-100">
+            <button onclick="toggleComments('${note.id}')" 
+                    class="text-sm text-blue-600 hover:text-blue-800" ${isTemp ? 'disabled' : ''}>
+                💬 Comments
+            </button>
+            <div id="comments-${note.id}" class="hidden mt-3 space-y-2">
+                <!-- Comments will be loaded here -->
+            </div>
+        </div>
+    `;
+    
+    // Add to top of list
+    if (container.firstChild && container.firstChild.className !== 'text-gray-500') {
+        container.insertBefore(noteDiv, container.firstChild);
+    } else {
+        // Replace "no notes" message if it exists
+        container.innerHTML = '';
+        container.appendChild(noteDiv);
+    }
+}
+
+function removeNoteFromUI(noteId) {
+    const noteElement = document.getElementById(`note-${noteId}`);
+    if (noteElement) {
+        noteElement.remove();
+        
+        // Check if container is now empty
+        const containerId = currentNoteType === 'personal' ? 'personalNotesList' : 'groupNotesList';
+        const container = document.getElementById(containerId);
+        if (container.children.length === 0) {
+            container.innerHTML = '<p class="text-gray-500 text-sm italic">No notes yet for this chapter.</p>';
+        }
+    }
+}
+
+function replaceNoteInUI(tempId, realNote) {
+    const tempElement = document.getElementById(`note-${tempId}`);
+    if (!tempElement) return;
+    
+    const canEdit = currentUserId && realNote.user_id === currentUserId;
+    const escapedContent = escapeHtml(realNote.content).replace(/\\/g, '\\\\').replace(/`/g, '\\`');
+    
+    // Create the replacement note element
+    const noteDiv = document.createElement('div');
+    noteDiv.className = 'bg-white rounded-lg p-4 shadow-sm border border-gray-200';
+    noteDiv.id = `note-${realNote.id}`;
+    noteDiv.innerHTML = `
+        <div class="flex items-start justify-between mb-2">
+            <div class="flex-1">
+                <p class="text-sm font-medium text-gray-700">${escapeHtml(realNote.username)}</p>
+                <p class="text-xs text-gray-500">${new Date(realNote.created_at).toLocaleString()}</p>
+            </div>
+            ${canEdit ? `
+                <div class="flex gap-2">
+                    <button onclick="editNote('${realNote.id}', \`${escapedContent}\`)"
+                            class="text-blue-600 hover:text-blue-800 text-xs">Edit</button>
+                    <button onclick="deleteNote('${realNote.id}')"
+                            class="text-red-600 hover:text-red-800 text-xs">Delete</button>
+                </div>
+            ` : ''}
+        </div>
+        <p class="text-gray-800 whitespace-pre-wrap">${escapeHtml(realNote.content)}</p>
+        <div class="mt-3 pt-3 border-t border-gray-100">
+            <button onclick="toggleComments('${realNote.id}')" 
+                    class="text-sm text-blue-600 hover:text-blue-800">
+                💬 Comments
+            </button>
+            <div id="comments-${realNote.id}" class="hidden mt-3 space-y-2">
+                <!-- Comments will be loaded here -->
+            </div>
+        </div>
+    `;
+    
+    // Replace the temp element with the real one
+    tempElement.replaceWith(noteDiv);
+}
+
+function updateNoteContentInUI(noteId, newContent) {
+    const noteElement = document.getElementById(`note-${noteId}`);
+    if (noteElement) {
+        const contentP = noteElement.querySelector('.whitespace-pre-wrap');
+        if (contentP) {
+            contentP.textContent = newContent;
+        }
+        
+        // Update the edit button's onclick to use new content
+        const editBtn = noteElement.querySelector('button[onclick*="editNote"]');
+        if (editBtn) {
+            const escapedContent = escapeHtml(newContent).replace(/\\/g, '\\\\').replace(/`/g, '\\`');
+            editBtn.setAttribute('onclick', `editNote('${noteId}', \`${escapedContent}\`)`);
+        }
+    }
+}
+
+async function addCommentToUI(noteId, comment) {
+    const commentsDiv = document.getElementById(`comments-${noteId}`);
+    if (!commentsDiv) return;
+    
+    // If comments section is open, add the comment
+    if (!commentsDiv.classList.contains('hidden')) {
+        const commentDiv = document.createElement('div');
+        commentDiv.className = 'bg-white rounded p-2 text-sm';
+        commentDiv.id = `comment-${comment.id}`;
+        commentDiv.innerHTML = `
+            <div class="flex items-start justify-between mb-1">
+                <span class="font-medium text-xs text-gray-700">${escapeHtml(comment.username)}</span>
+                <span class="text-xs text-gray-500">${new Date(comment.created_at).toLocaleString()}</span>
+            </div>
+            <p class="text-gray-800 text-xs">${escapeHtml(comment.content)}</p>
+        `;
+        
+        const commentsContainer = commentsDiv.querySelector('.bg-gray-50');
+        if (commentsContainer) {
+            // Remove "no comments" message if it exists
+            const noCommentsMsg = commentsContainer.querySelector('.text-gray-500.italic');
+            if (noCommentsMsg) {
+                noCommentsMsg.remove();
+            }
+            
+            // Add before the "Add Comment" button
+            const addBtn = commentsContainer.querySelector('.mt-2');
+            if (addBtn) {
+                commentsContainer.insertBefore(commentDiv, addBtn);
+            }
+        }
+    }
+}
+
+// Utility function for HTML escaping
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
 }
 
 // Start the application

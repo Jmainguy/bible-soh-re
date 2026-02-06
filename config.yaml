@@ -69,3 +69,21 @@ translations:
       user: anonymous
       password: password
       directory: /pub/sword/raw/modules/texts/ztext/akjv
+
+# Authentication configuration
+auth:
+  # Base URL of your application (used for OAuth callbacks)
+  baseURL: "http://localhost:8080"
+  
+  # Session secret key (generate a random string in production)
+  sessionSecret: "change-this-to-a-random-secret-key"
+  
+  # Google OAuth credentials
+  # Get these from https://console.cloud.google.com/
+  googleClientID: ""
+  googleClientSecret: ""
+  
+  # GitHub OAuth credentials
+  # Get these from https://github.com/settings/developers
+  githubClientID: ""
+  githubClientSecret: ""

@@ -644,8 +644,9 @@ func (h *AuthHandler) handleCreateComment(w http.ResponseWriter, r *http.Request
 	}
 
 	var req struct {
-		NoteID  int64  `json:"noteId"`
-		Content string `json:"content"`
+		NoteID   int64  `json:"noteId"`
+		ParentID *int64 `json:"parentId,omitempty"` // Optional parent comment ID for threading
+		Content  string `json:"content"`
 	}
 
 	if !decodeJSONBody(w, r, &req) {
@@ -658,12 +659,28 @@ func (h *AuthHandler) handleCreateComment(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	comment, err := h.db.CreateNoteComment(note.ID, user.ID, req.Content)
+	// Convert parent ID to sql.NullInt64
+	var parentID sql.NullInt64
+	if req.ParentID != nil {
+		parentID = sql.NullInt64{Int64: *req.ParentID, Valid: true}
+	}
+
+	comment, err := h.db.CreateNoteComment(note.ID, user.ID, parentID, req.Content)
 	if err != nil {
 		log.Printf("Failed to create comment: %v", err)
 		respondError(w, "Failed to create comment", http.StatusInternalServerError)
 		return
 	}
+
+	// Broadcast update to all connected clients
+	BroadcastUpdate(BroadcastMessage{
+		Type:   "note_comment",
+		Action: "create",
+		NoteID: int(req.NoteID),
+		Data: map[string]interface{}{
+			"comment_id": comment.ID,
+		},
+	})
 
 	respondJSON(w, comment)
 }
@@ -722,6 +739,98 @@ func (h *AuthHandler) handleDeleteComment(w http.ResponseWriter, r *http.Request
 		respondError(w, "Failed to delete comment", http.StatusInternalServerError)
 		return
 	}
+
+	// Broadcast update to all connected clients
+	BroadcastUpdate(BroadcastMessage{
+		Type:   "note_comment",
+		Action: "delete",
+		Data: map[string]interface{}{
+			"comment_id": commentID,
+		},
+	})
+
+	respondSuccess(w)
+}
+
+// handleCommentsRESTful handles /api/comments/* routes with path parameters
+func (h *AuthHandler) handleCommentsRESTful(w http.ResponseWriter, r *http.Request) {
+	// Parse the path: /api/comments/{id}/{action}
+	path := r.URL.Path[len("/api/comments/"):]
+
+	// Handle /api/comments/create
+	if path == "create" {
+		h.handleCreateComment(w, r)
+		return
+	}
+
+	// Handle /api/comments/list
+	if path == "list" {
+		h.handleGetComments(w, r)
+		return
+	}
+
+	// Handle /api/comments/delete
+	if path == "delete" {
+		h.handleDeleteComment(w, r)
+		return
+	}
+
+	// Parse comment ID from path for /api/comments/{id}/* routes
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
+	commentID, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid comment ID", http.StatusBadRequest)
+		return
+	}
+
+	action := parts[1]
+
+	switch action {
+	case "update":
+		h.handleUpdateCommentByID(w, r, commentID)
+	default:
+		http.Error(w, "Unknown action", http.StatusNotFound)
+	}
+}
+
+// handleUpdateCommentByID updates a comment (only by owner)
+func (h *AuthHandler) handleUpdateCommentByID(w http.ResponseWriter, r *http.Request, commentID int64) {
+	if !requireMethod(w, r, http.MethodPatch) {
+		return
+	}
+
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+
+	var req struct {
+		Content string `json:"content"`
+	}
+
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	if err := h.db.UpdateNoteComment(commentID, user.ID, req.Content); err != nil {
+		log.Printf("Failed to update comment: %v", err)
+		respondError(w, "Failed to update comment", http.StatusInternalServerError)
+		return
+	}
+
+	// Broadcast update to all connected clients
+	BroadcastUpdate(BroadcastMessage{
+		Type:   "note_comment",
+		Action: "update",
+		Data: map[string]interface{}{
+			"comment_id": commentID,
+		},
+	})
 
 	respondSuccess(w)
 }
@@ -1303,4 +1412,871 @@ func (h *AuthHandler) handleDeleteStudyPlan(w http.ResponseWriter, r *http.Reque
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// ============ Prayer Request Handlers ============
+
+// handleCreatePrayerRequest creates a new prayer request for a group
+func (h *AuthHandler) handleCreatePrayerRequest(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+
+	var req struct {
+		GroupID int64  `json:"group_id"`
+		Title   string `json:"title"`
+		Content string `json:"content"`
+	}
+
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	if req.Title == "" || req.Content == "" {
+		respondError(w, "Title and content are required", http.StatusBadRequest)
+		return
+	}
+
+	// Verify user is group member
+	if !h.requireGroupMember(w, req.GroupID, user.ID) {
+		return
+	}
+
+	prayer, err := h.db.CreatePrayerRequest(req.GroupID, user.ID, req.Title, req.Content)
+	if err != nil {
+		log.Printf("Failed to create prayer request: %v", err)
+		respondError(w, "Failed to create prayer request", http.StatusInternalServerError)
+		return
+	}
+
+	respondJSON(w, prayer)
+}
+
+// handleGetGroupPrayerRequests retrieves all prayer requests for a group
+func (h *AuthHandler) handleGetGroupPrayerRequests(w http.ResponseWriter, r *http.Request) {
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+
+	groupID, ok := parseIDParam(w, r.URL.Query().Get("group_id"), "group ID")
+	if !ok {
+		return
+	}
+
+	// Verify user is group member
+	if !h.requireGroupMember(w, groupID, user.ID) {
+		return
+	}
+
+	// Optional status filter
+	status := r.URL.Query().Get("status")
+	if status != "" && status != "active" && status != "answered" && status != "archived" {
+		respondError(w, "Invalid status filter", http.StatusBadRequest)
+		return
+	}
+
+	prayers, err := h.db.GetGroupPrayerRequests(groupID, status)
+	if err != nil {
+		log.Printf("Failed to get prayer requests: %v", err)
+		respondError(w, "Failed to get prayer requests", http.StatusInternalServerError)
+		return
+	}
+
+	respondJSON(w, prayers)
+}
+
+// handleGetPrayerRequest retrieves a single prayer request
+func (h *AuthHandler) handleGetPrayerRequest(w http.ResponseWriter, r *http.Request, prayerID int64) {
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+
+	prayer, err := h.db.GetPrayerRequest(prayerID)
+	if err != nil {
+		respondError(w, "Prayer request not found", http.StatusNotFound)
+		return
+	}
+
+	// Verify user is group member
+	if !h.requireGroupMember(w, prayer.GroupID, user.ID) {
+		return
+	}
+
+	respondJSON(w, prayer)
+}
+
+// handleUpdatePrayerRequest updates a prayer request
+func (h *AuthHandler) handleUpdatePrayerRequest(w http.ResponseWriter, r *http.Request, prayerID int64) {
+	if !requireMethod(w, r, "PUT") {
+		return
+	}
+
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+
+	var req struct {
+		Title   string `json:"title"`
+		Content string `json:"content"`
+	}
+
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	if req.Title == "" || req.Content == "" {
+		respondError(w, "Title and content are required", http.StatusBadRequest)
+		return
+	}
+
+	if err := h.db.UpdatePrayerRequest(prayerID, user.ID, req.Title, req.Content); err != nil {
+		log.Printf("Failed to update prayer request: %v", err)
+		respondError(w, "Failed to update prayer request", http.StatusInternalServerError)
+		return
+	}
+
+	respondSuccess(w)
+}
+
+// handleUpdatePrayerRequestStatus updates the status of a prayer request
+func (h *AuthHandler) handleUpdatePrayerRequestStatus(w http.ResponseWriter, r *http.Request, prayerID int64) {
+	if !requireMethod(w, r, "PATCH") {
+		return
+	}
+
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+
+	var req struct {
+		Status            string `json:"status"`
+		AnswerExplanation string `json:"answer_explanation"`
+	}
+
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	if err := h.db.UpdatePrayerRequestStatus(prayerID, user.ID, req.Status, req.AnswerExplanation); err != nil {
+		log.Printf("Failed to update prayer request status: %v", err)
+		respondError(w, "Failed to update prayer request status", http.StatusInternalServerError)
+		return
+	}
+
+	respondSuccess(w)
+}
+
+// handleUpdatePrayerAnswerExplanation updates the answer explanation of a prayer request
+func (h *AuthHandler) handleUpdatePrayerAnswerExplanation(w http.ResponseWriter, r *http.Request, prayerID int64) {
+	if !requireMethod(w, r, "PATCH") {
+		return
+	}
+
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+
+	var req struct {
+		AnswerExplanation string `json:"answer_explanation"`
+	}
+
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	if err := h.db.UpdatePrayerAnswerExplanation(prayerID, user.ID, req.AnswerExplanation); err != nil {
+		log.Printf("Failed to update answer explanation: %v", err)
+		respondError(w, "Failed to update answer explanation", http.StatusInternalServerError)
+		return
+	}
+
+	respondSuccess(w)
+}
+
+// handleMarkPrayerAsUnanswered marks a prayer as unanswered (clears answer and sets to active)
+func (h *AuthHandler) handleMarkPrayerAsUnanswered(w http.ResponseWriter, r *http.Request, prayerID int64) {
+	if !requireMethod(w, r, "POST") {
+		return
+	}
+
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+
+	if err := h.db.MarkPrayerAsUnanswered(prayerID, user.ID); err != nil {
+		log.Printf("Failed to mark prayer as unanswered: %v", err)
+		respondError(w, "Failed to mark prayer as unanswered", http.StatusInternalServerError)
+		return
+	}
+
+	respondSuccess(w)
+}
+
+// handleDeletePrayerRequest deletes a prayer request
+func (h *AuthHandler) handleDeletePrayerRequest(w http.ResponseWriter, r *http.Request, prayerID int64) {
+	if !requireMethod(w, r, http.MethodDelete) {
+		return
+	}
+
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+
+	if err := h.db.DeletePrayerRequest(prayerID, user.ID); err != nil {
+		log.Printf("Failed to delete prayer request: %v", err)
+		respondError(w, "Failed to delete prayer request", http.StatusInternalServerError)
+		return
+	}
+
+	respondSuccess(w)
+}
+
+// handleArchivePrayerRequest archives a prayer request
+func (h *AuthHandler) handleArchivePrayerRequest(w http.ResponseWriter, r *http.Request, prayerID int64) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+
+	if err := h.db.ArchivePrayerRequest(prayerID, user.ID); err != nil {
+		log.Printf("Failed to archive prayer request: %v", err)
+		respondError(w, err.Error(), http.StatusForbidden)
+		return
+	}
+
+	respondSuccess(w)
+}
+
+// handleRestorePrayerRequest restores an archived prayer request
+func (h *AuthHandler) handleRestorePrayerRequest(w http.ResponseWriter, r *http.Request, prayerID int64) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+
+	if err := h.db.RestorePrayerRequest(int(prayerID), int(user.ID)); err != nil {
+		log.Printf("Failed to restore prayer request: %v", err)
+		respondError(w, err.Error(), http.StatusForbidden)
+		return
+	}
+
+	respondSuccess(w)
+}
+
+// handleGetArchivedPrayerRequests returns archived prayer requests for a group
+func (h *AuthHandler) handleGetArchivedPrayerRequests(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+
+	groupIDStr := r.URL.Query().Get("group_id")
+	if groupIDStr == "" {
+		respondError(w, "group_id is required", http.StatusBadRequest)
+		return
+	}
+
+	groupID, err := strconv.ParseInt(groupIDStr, 10, 64)
+	if err != nil {
+		respondError(w, "Invalid group_id", http.StatusBadRequest)
+		return
+	}
+
+	// Get archived prayers for the group
+	prayers, err := h.db.GetGroupPrayerRequests(groupID, "archived")
+	if err != nil {
+		log.Printf("Failed to get archived prayer requests: %v", err)
+		respondError(w, "Failed to get archived prayer requests", http.StatusInternalServerError)
+		return
+	}
+
+	respondJSON(w, prayers)
+}
+
+// handleCreatePrayerComment creates a comment on a prayer request
+func (h *AuthHandler) handleCreatePrayerComment(w http.ResponseWriter, r *http.Request, prayerID int64) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+
+	var req struct {
+		Content string `json:"content"`
+	}
+
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	if req.Content == "" {
+		respondError(w, "Content is required", http.StatusBadRequest)
+		return
+	}
+
+	// Verify prayer request exists and user is group member
+	prayer, err := h.db.GetPrayerRequest(prayerID)
+	if err != nil {
+		respondError(w, "Prayer request not found", http.StatusNotFound)
+		return
+	}
+
+	if !h.requireGroupMember(w, prayer.GroupID, user.ID) {
+		return
+	}
+
+	comment, err := h.db.CreatePrayerComment(prayerID, user.ID, req.Content)
+	if err != nil {
+		log.Printf("Failed to create prayer comment: %v", err)
+		respondError(w, "Failed to create comment", http.StatusInternalServerError)
+		return
+	}
+
+	respondJSON(w, comment)
+}
+
+// handleGetPrayerComments retrieves comments for a prayer request
+func (h *AuthHandler) handleGetPrayerComments(w http.ResponseWriter, r *http.Request, prayerID int64) {
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+
+	// Verify prayer request exists and user is group member
+	prayer, err := h.db.GetPrayerRequest(prayerID)
+	if err != nil {
+		respondError(w, "Prayer request not found", http.StatusNotFound)
+		return
+	}
+
+	if !h.requireGroupMember(w, prayer.GroupID, user.ID) {
+		return
+	}
+
+	comments, err := h.db.GetPrayerComments(prayerID)
+	if err != nil {
+		log.Printf("Failed to get prayer comments: %v", err)
+		respondError(w, "Failed to get comments", http.StatusInternalServerError)
+		return
+	}
+
+	respondJSON(w, comments)
+}
+
+// handleDeletePrayerComment deletes a comment on a prayer request
+func (h *AuthHandler) handleDeletePrayerComment(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodDelete) {
+		return
+	}
+
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+
+	commentID, ok := parseIDParam(w, r.URL.Query().Get("commentId"), "comment ID")
+	if !ok {
+		return
+	}
+
+	if err := h.db.DeletePrayerComment(commentID, user.ID); err != nil {
+		log.Printf("Failed to delete prayer comment: %v", err)
+		respondError(w, "Failed to delete comment", http.StatusInternalServerError)
+		return
+	}
+
+	respondSuccess(w)
+}
+
+// handlePrayersRESTful handles /api/prayers/* routes with path parameters
+func (h *AuthHandler) handlePrayersRESTful(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path[len("/api/prayers/"):]
+
+	// Handle /api/prayers/create
+	if path == "create" {
+		h.handleCreatePrayerRequest(w, r)
+		return
+	}
+
+	// Handle /api/prayers/group (list prayers for a group)
+	if path == "group" {
+		h.handleGetGroupPrayerRequests(w, r)
+		return
+	}
+
+	// Handle /api/prayers/archived (list archived prayers for a group)
+	if path == "archived" {
+		h.handleGetArchivedPrayerRequests(w, r)
+		return
+	}
+
+	// Parse prayer ID for /api/prayers/{id}/* routes
+	parts := splitPath(path)
+	if len(parts) == 0 {
+		respondError(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
+	prayerID, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		respondError(w, "Invalid prayer request ID", http.StatusBadRequest)
+		return
+	}
+
+	if len(parts) == 1 {
+		// GET /api/prayers/{id}
+		h.handleGetPrayerRequest(w, r, prayerID)
+		return
+	}
+
+	action := parts[1]
+	switch action {
+	case "update":
+		h.handleUpdatePrayerRequest(w, r, prayerID)
+	case "status":
+		h.handleUpdatePrayerRequestStatus(w, r, prayerID)
+	case "answer":
+		h.handleUpdatePrayerAnswerExplanation(w, r, prayerID)
+	case "unanswered":
+		h.handleMarkPrayerAsUnanswered(w, r, prayerID)
+	case "archive":
+		h.handleArchivePrayerRequest(w, r, prayerID)
+	case "restore":
+		h.handleRestorePrayerRequest(w, r, prayerID)
+	case "delete":
+		h.handleDeletePrayerRequest(w, r, prayerID)
+	case "comments":
+		if len(parts) == 2 {
+			if r.Method == http.MethodPost {
+				h.handleCreatePrayerComment(w, r, prayerID)
+			} else {
+				h.handleGetPrayerComments(w, r, prayerID)
+			}
+		} else {
+			respondError(w, "Unknown action", http.StatusNotFound)
+		}
+	default:
+		respondError(w, "Unknown action", http.StatusNotFound)
+	}
+}
+
+// ============ Profile Handlers ============
+
+// handleGetProfile returns the current user's profile
+func (h *AuthHandler) handleGetProfile(w http.ResponseWriter, r *http.Request) {
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+
+	respondJSON(w, user)
+}
+
+// handleUpdateProfile updates the current user's profile
+func (h *AuthHandler) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPut) {
+		return
+	}
+
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+
+	var data struct {
+		FirstName         string `json:"first_name"`
+		LastName          string `json:"last_name"`
+		ProfilePictureURL string `json:"profile_picture_url"`
+		LocationCity      string `json:"location_city"`
+		LocationState     string `json:"location_state"`
+	}
+
+	if !decodeJSONBody(w, r, &data) {
+		return
+	}
+
+	// Update profile in database
+	if err := h.db.UpdateProfile(user.ID, data.FirstName, data.LastName, data.ProfilePictureURL, data.LocationCity, data.LocationState); err != nil {
+		log.Printf("Failed to update profile: %v", err)
+		respondError(w, "Failed to update profile", http.StatusInternalServerError)
+		return
+	}
+
+	// Return updated user
+	updatedUser, err := h.db.GetUserByID(user.ID)
+	if err != nil {
+		respondError(w, "Failed to get updated user", http.StatusInternalServerError)
+		return
+	}
+
+	respondJSON(w, updatedUser)
+}
+
+// handleUploadProfilePicture handles profile picture uploads
+func (h *AuthHandler) handleUploadProfilePicture(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+
+	// Parse multipart form (max 10MB)
+	err := r.ParseMultipartForm(10 << 20)
+	if err != nil {
+		respondError(w, "Failed to parse form", http.StatusBadRequest)
+		return
+	}
+
+	file, header, err := r.FormFile("profile_picture")
+	if err != nil {
+		respondError(w, "Failed to get file from form", http.StatusBadRequest)
+		return
+	}
+	defer func() {
+		if err := file.Close(); err != nil {
+			log.Printf("Failed to close file: %v", err)
+		}
+	}()
+
+	// Validate file type
+	contentType := header.Header.Get("Content-Type")
+	if contentType != "image/jpeg" && contentType != "image/png" && contentType != "image/gif" && contentType != "image/webp" {
+		respondError(w, "Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed", http.StatusBadRequest)
+		return
+	}
+
+	// Create uploads directory if it doesn't exist
+	uploadsDir := "static/uploads/profile-pictures"
+	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
+		log.Printf("Failed to create uploads directory: %v", err)
+		respondError(w, "Failed to create uploads directory", http.StatusInternalServerError)
+		return
+	}
+
+	// Generate unique filename
+	ext := filepath.Ext(header.Filename)
+	filename := filepath.Join(uploadsDir, strconv.FormatInt(user.ID, 10)+ext)
+
+	// Create the file
+	dst, err := os.Create(filename)
+	if err != nil {
+		log.Printf("Failed to create file: %v", err)
+		respondError(w, "Failed to save file", http.StatusInternalServerError)
+		return
+	}
+	defer func() {
+		if err := dst.Close(); err != nil {
+			log.Printf("Failed to close file: %v", err)
+		}
+	}()
+
+	// Copy the uploaded file to the destination
+	if _, err := io.Copy(dst, file); err != nil {
+		log.Printf("Failed to save file: %v", err)
+		respondError(w, "Failed to save file", http.StatusInternalServerError)
+		return
+	}
+
+	// Update profile picture URL in database
+	profilePictureURL := "/uploads/profile-pictures/" + strconv.FormatInt(user.ID, 10) + ext
+	if err := h.db.UpdateProfile(user.ID, user.FirstName, user.LastName, profilePictureURL, user.LocationCity, user.LocationState); err != nil {
+		log.Printf("Failed to update profile picture URL: %v", err)
+		respondError(w, "Failed to update profile", http.StatusInternalServerError)
+		return
+	}
+
+	respondJSON(w, map[string]string{"url": profilePictureURL})
+}
+
+// handleVerseCommentsRESTful handles /api/verse-comments/* routes
+func (h *AuthHandler) handleVerseCommentsRESTful(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path[len("/api/verse-comments/"):]
+
+	// Handle /api/verse-comments/create
+	if path == "create" {
+		h.handleCreateVerseComment(w, r)
+		return
+	}
+
+	// Handle /api/verse-comments/list
+	if path == "list" {
+		h.handleGetVerseComments(w, r)
+		return
+	}
+
+	// Parse comment ID for /api/verse-comments/{id}/* routes
+	parts := splitPath(path)
+	if len(parts) == 0 {
+		respondError(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
+	commentID, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		respondError(w, "Invalid comment ID", http.StatusBadRequest)
+		return
+	}
+
+	if len(parts) == 1 {
+		respondError(w, "Action required", http.StatusBadRequest)
+		return
+	}
+
+	action := parts[1]
+	switch action {
+	case "update":
+		h.handleUpdateVerseComment(w, r, commentID)
+	case "delete":
+		h.handleDeleteVerseComment(w, r, commentID)
+	default:
+		respondError(w, "Unknown action", http.StatusNotFound)
+	}
+}
+
+// handleCreateVerseComment creates a new verse comment
+func (h *AuthHandler) handleCreateVerseComment(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, "POST") {
+		return
+	}
+
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+
+	var req struct {
+		GroupID  *int64 `json:"group_id"`
+		Book     string `json:"book"`
+		Chapter  int    `json:"chapter"`
+		Verse    int    `json:"verse"`
+		ParentID *int64 `json:"parent_id"`
+		Content  string `json:"content"`
+	}
+
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	if req.Book == "" || req.Chapter < 1 || req.Verse < 1 || req.Content == "" {
+		respondError(w, "Book, chapter, verse, and content are required", http.StatusBadRequest)
+		return
+	}
+
+	var groupID sql.NullInt64
+	if req.GroupID != nil {
+		groupID = sql.NullInt64{Int64: *req.GroupID, Valid: true}
+		// Verify user is member of the group
+		if !h.requireGroupMember(w, *req.GroupID, user.ID) {
+			return
+		}
+	}
+
+	var parentID sql.NullInt64
+	if req.ParentID != nil {
+		parentID = sql.NullInt64{Int64: *req.ParentID, Valid: true}
+	}
+
+	comment, err := h.db.CreateVerseComment(groupID, user.ID, req.Book, req.Chapter, req.Verse, parentID, req.Content)
+	if err != nil {
+		log.Printf("Failed to create verse comment: %v", err)
+		respondError(w, "Failed to create comment", http.StatusInternalServerError)
+		return
+	}
+
+	// Broadcast update to all connected clients
+	BroadcastUpdate(BroadcastMessage{
+		Type:    "verse_comment",
+		Action:  "create",
+		Book:    req.Book,
+		Chapter: req.Chapter,
+		Verse:   req.Verse,
+		Data: map[string]interface{}{
+			"comment_id": comment.ID,
+			"group_id":   req.GroupID,
+		},
+	})
+
+	respondJSON(w, comment)
+}
+
+// handleGetVerseComments retrieves comments for a verse
+func (h *AuthHandler) handleGetVerseComments(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, "GET") {
+		return
+	}
+
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+
+	book := r.URL.Query().Get("book")
+	chapterStr := r.URL.Query().Get("chapter")
+	verseStr := r.URL.Query().Get("verse")
+	groupIDStr := r.URL.Query().Get("group_id")
+
+	if book == "" || chapterStr == "" || verseStr == "" {
+		respondError(w, "Book, chapter, and verse are required", http.StatusBadRequest)
+		return
+	}
+
+	chapter, err := strconv.Atoi(chapterStr)
+	if err != nil || chapter < 1 {
+		respondError(w, "Invalid chapter number", http.StatusBadRequest)
+		return
+	}
+
+	verse, err := strconv.Atoi(verseStr)
+	if err != nil || verse < 1 {
+		respondError(w, "Invalid verse number", http.StatusBadRequest)
+		return
+	}
+
+	var groupID sql.NullInt64
+	if groupIDStr != "" {
+		gid, err := strconv.ParseInt(groupIDStr, 10, 64)
+		if err != nil {
+			respondError(w, "Invalid group ID", http.StatusBadRequest)
+			return
+		}
+		groupID = sql.NullInt64{Int64: gid, Valid: true}
+		// Verify user is member of the group
+		if !h.requireGroupMember(w, gid, user.ID) {
+			return
+		}
+	}
+
+	comments, err := h.db.GetVerseComments(book, chapter, verse, groupID)
+	if err != nil {
+		log.Printf("Failed to get verse comments: %v", err)
+		respondError(w, "Failed to get comments", http.StatusInternalServerError)
+		return
+	}
+
+	respondJSON(w, comments)
+}
+
+// handleUpdateVerseComment updates a verse comment
+func (h *AuthHandler) handleUpdateVerseComment(w http.ResponseWriter, r *http.Request, commentID int64) {
+	if !requireMethod(w, r, "PATCH") {
+		return
+	}
+
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+
+	var req struct {
+		Content string `json:"content"`
+	}
+
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	if req.Content == "" {
+		respondError(w, "Content is required", http.StatusBadRequest)
+		return
+	}
+
+	// Get comment details before updating (for broadcast)
+	comment, err := h.db.GetVerseComment(commentID)
+	if err != nil {
+		log.Printf("Failed to get verse comment: %v", err)
+		respondError(w, "Comment not found", http.StatusNotFound)
+		return
+	}
+
+	err = h.db.UpdateVerseComment(commentID, user.ID, req.Content)
+	if err != nil {
+		log.Printf("Failed to update verse comment: %v", err)
+		respondError(w, err.Error(), http.StatusForbidden)
+		return
+	}
+
+	// Broadcast update to all connected clients
+	BroadcastUpdate(BroadcastMessage{
+		Type:    "verse_comment",
+		Action:  "update",
+		Book:    comment.Book,
+		Chapter: comment.Chapter,
+		Verse:   comment.Verse,
+		Data: map[string]interface{}{
+			"comment_id": commentID,
+		},
+	})
+
+	respondSuccess(w)
+}
+
+// handleDeleteVerseComment deletes a verse comment
+func (h *AuthHandler) handleDeleteVerseComment(w http.ResponseWriter, r *http.Request, commentID int64) {
+	if !requireMethod(w, r, "DELETE") {
+		return
+	}
+
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+
+	// Get comment details before deleting (for broadcast)
+	comment, err := h.db.GetVerseComment(commentID)
+	if err != nil {
+		log.Printf("Failed to get verse comment: %v", err)
+		respondError(w, "Comment not found", http.StatusNotFound)
+		return
+	}
+
+	err = h.db.DeleteVerseComment(commentID, user.ID)
+	if err != nil {
+		log.Printf("Failed to delete verse comment: %v", err)
+		respondError(w, err.Error(), http.StatusForbidden)
+		return
+	}
+
+	// Broadcast update to all connected clients
+	BroadcastUpdate(BroadcastMessage{
+		Type:    "verse_comment",
+		Action:  "delete",
+		Book:    comment.Book,
+		Chapter: comment.Chapter,
+		Verse:   comment.Verse,
+		Data: map[string]interface{}{
+			"comment_id": commentID,
+		},
+	})
+
+	respondSuccess(w)
 }

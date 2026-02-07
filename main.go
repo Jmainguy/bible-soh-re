@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 //go:embed static
@@ -1010,6 +1011,14 @@ func main() {
 	http.HandleFunc("/api/reading-position", authHandler.handleGetReadingPosition)
 	http.HandleFunc("/api/save-reading-position", authHandler.handleSaveReadingPosition)
 
+	// Profile routes
+	http.HandleFunc("/api/profile", authHandler.handleGetProfile)
+	http.HandleFunc("/api/profile/update", authHandler.handleUpdateProfile)
+	http.HandleFunc("/api/profile/picture", authHandler.handleUploadProfilePicture)
+
+	// User groups route (for dropdowns, etc.)
+	http.HandleFunc("/api/user/groups", authHandler.handleGetUserGroups)
+
 	// RESTful group management routes
 	http.HandleFunc("/api/groups/", authHandler.handleGroupsRESTful)
 
@@ -1025,10 +1034,22 @@ func main() {
 	// RESTful notes routes
 	http.HandleFunc("/api/notes/", authHandler.handleNotesRESTful)
 
-	// Comments routes
-	http.HandleFunc("/api/comments/create", authHandler.handleCreateComment)
-	http.HandleFunc("/api/comments/list", authHandler.handleGetComments)
-	http.HandleFunc("/api/comments/delete", authHandler.handleDeleteComment)
+	// Verse comments routes
+	http.HandleFunc("/api/verse-comments/", authHandler.handleVerseCommentsRESTful)
+
+	// Comments routes (RESTful)
+	http.HandleFunc("/api/comments/", authHandler.handleCommentsRESTful)
+
+	// Prayer request routes
+	http.HandleFunc("/api/prayers/", authHandler.handlePrayersRESTful)
+	http.HandleFunc("/api/prayer-comments/delete", authHandler.handleDeletePrayerComment)
+
+	// Reaction routes
+	http.HandleFunc("/api/reactions/toggle", authHandler.handleToggleReaction)
+	http.HandleFunc("/api/reactions/summary", authHandler.handleGetReactionsSummary)
+
+	// WebSocket route
+	http.HandleFunc("/ws", HandleWebSocket)
 
 	// API routes
 	http.HandleFunc("/api/translations", handleTranslations)
@@ -1042,6 +1063,15 @@ func main() {
 	http.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "static/register.html")
 	})
+	http.HandleFunc("/groups", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "static/groups.html")
+	})
+	http.HandleFunc("/group", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "static/group.html")
+	})
+	http.HandleFunc("/profile", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "static/profile.html")
+	})
 
 	// Serve uploaded files
 	http.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("static/uploads"))))
@@ -1052,6 +1082,31 @@ func main() {
 		log.Fatal(err)
 	}
 	http.Handle("/", http.FileServer(http.FS(staticFS)))
+
+	// Start WebSocket hub
+	go hub.Run()
+
+	// Start background job for auto-archiving prayer requests
+	go func() {
+		ticker := time.NewTicker(24 * time.Hour) // Run once per day
+		defer ticker.Stop()
+
+		// Run immediately on startup
+		if err := db.AutoArchiveOldPrayers(); err != nil {
+			log.Printf("Error auto-archiving prayers: %v", err)
+		} else {
+			log.Println("Auto-archive job completed successfully")
+		}
+
+		// Then run daily
+		for range ticker.C {
+			if err := db.AutoArchiveOldPrayers(); err != nil {
+				log.Printf("Error auto-archiving prayers: %v", err)
+			} else {
+				log.Println("Auto-archive job completed successfully")
+			}
+		}
+	}()
 
 	log.Println("Server starting on http://localhost:8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))

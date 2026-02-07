@@ -192,6 +192,91 @@
                 padding-bottom: 4rem;
             }
         }
+        .verse-comments {
+            margin-top: 0.75rem;
+            padding: 1rem;
+            background-color: #f9f5ff;
+            border-left: 3px solid #9333ea;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+        }
+        .verse-comment {
+            margin-bottom: 0.75rem;
+            padding: 0.75rem;
+            background-color: white;
+            border-radius: 0.375rem;
+            border: 1px solid #e9d5ff;
+        }
+        .verse-comment-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            margin-bottom: 0.5rem;
+            font-size: 0.813rem;
+        }
+        .verse-comment-content {
+            color: #374151;
+            line-height: 1.5;
+            white-space: pre-wrap;
+        }
+        .verse-comment-reply {
+            margin-left: 1.5rem;
+            margin-top: 0.5rem;
+            padding-left: 0.75rem;
+            border-left: 2px solid #e9d5ff;
+        }
+        .verse-comment-actions {
+            display: flex;
+            gap: 0.75rem;
+            margin-top: 0.5rem;
+            font-size: 0.75rem;
+        }
+        .verse-comment-action {
+            color: #7c3aed;
+            cursor: pointer;
+            text-decoration: none;
+        }
+        .verse-comment-action:hover {
+            text-decoration: underline;
+        }
+        .verse-comment-form {
+            margin-top: 0.75rem;
+        }
+        .verse-comment-form textarea {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid #e9d5ff;
+            border-radius: 0.375rem;
+            resize: vertical;
+            font-family: inherit;
+            font-size: 0.875rem;
+        }
+        .verse-comment-form button {
+            margin-top: 0.5rem;
+            padding: 0.375rem 0.75rem;
+            background-color: #9333ea;
+            color: white;
+            border: none;
+            border-radius: 0.375rem;
+            cursor: pointer;
+            font-size: 0.813rem;
+            transition: background-color 0.2s;
+        }
+        .verse-comment-form button:hover {
+            background-color: #7c3aed;
+        }
+        .verse-comment-form button:disabled {
+            background-color: #d1d5db;
+            cursor: not-allowed;
+        }
+        .hide-verse-comments .verse-comments,
+        .hide-verse-comments .verse-comment-add-btn,
+        .hide-verse-comments .verse-comments-empty {
+            display: none;
+        }
+        .verse-comments-empty {
+            margin-top: 0.5rem;
+        }
     </style>
 </head>
 <body class="bg-gray-50">
@@ -212,29 +297,45 @@
                         <p id="translationDescription" class="text-center text-blue-200 mt-1 md:mt-2 text-sm md:text-base"></p>
                     </div>
                     
-                    <!-- User Menu -->
-                    <div id="userMenu" class="hidden">
-                        <div class="relative">
-                            <button id="userMenuButton" class="flex items-center gap-2 bg-blue-700 hover:bg-blue-600 px-3 py-2 rounded-lg transition">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
-                                </svg>
-                                <span id="userName" class="text-sm hidden md:inline"></span>
-                            </button>
-                            <div id="userDropdown" class="hidden absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg py-1 z-50">
-                                <div class="px-4 py-2 border-b border-gray-200">
-                                    <p class="text-sm text-gray-700 font-medium" id="userEmail"></p>
+                    <!-- Right side menu items -->
+                    <div class="flex items-center gap-2">
+                        <!-- Community Menu -->
+                        <div id="communityMenu" class="hidden">
+                            <div class="relative">
+                                <button id="communityMenuButton" class="flex items-center gap-2 bg-blue-700 hover:bg-blue-600 px-3 py-2 rounded-lg transition">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+                                    </svg>
+                                    <span class="text-sm hidden md:inline">Community</span>
+                                </button>
+                                <div id="communityDropdown" class="hidden absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg py-1 z-50">
+                                    <a href="/groups" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Study Groups</a>
                                 </div>
-                                <a href="/groups.html" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Study Groups</a>
-                                <a href="/auth/logout" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Sign Out</a>
                             </div>
                         </div>
+                        
+                        <!-- User Menu -->
+                        <div id="userMenu" class="hidden">
+                            <div class="relative">
+                                <button id="userMenuButton" class="flex items-center gap-2 bg-blue-700 hover:bg-blue-600 px-3 py-2 rounded-lg transition">
+                                    <div id="userProfilePic"></div>
+                                    <span id="userName" class="text-sm hidden md:inline"></span>
+                                </button>
+                                <div id="userDropdown" class="hidden absolute right-0 mt-2 w-48 bg-white rounded-lg shadow-lg py-1 z-50">
+                                    <div class="px-4 py-2 border-b border-gray-200">
+                                        <p class="text-sm text-gray-700 font-medium" id="userEmail"></p>
+                                    </div>
+                                    <a href="/profile" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Edit Profile</a>
+                                    <a href="/auth/logout" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Sign Out</a>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Login Button (shown when not authenticated) -->
+                        <a id="loginButton" href="/login" class="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded-lg transition text-sm">
+                            Sign In
+                        </a>
                     </div>
-                    
-                    <!-- Login Button (shown when not authenticated) -->
-                    <a id="loginButton" href="/login" class="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded-lg transition text-sm">
-                        Sign In
-                    </a>
                 </div>
             </div>
         </header>
@@ -275,6 +376,14 @@
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path></svg>
                                         <span class="hidden sm:inline">Show References</span>
                                     </button>
+                                    <button id="toggleVerseComments" class="px-3 py-1.5 md:px-4 md:py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition text-xs md:text-sm flex-shrink-0 hidden">
+                                        <svg class="w-4 h-4 md:w-5 md:h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>
+                                        <span class="hidden sm:inline">Show Notes</span>
+                                    </button>
+                                    <select id="verseCommentsGroupSelect" class="px-3 py-1.5 md:px-4 md:py-2 bg-white border border-gray-300 rounded-md text-xs md:text-sm flex-shrink-0 hidden">
+                                        <option value="">Personal Notes</option>
+                                    </select>
                                     <button id="prevChapter" class="px-3 py-1.5 md:px-4 md:py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition text-xs md:text-sm flex-1 md:flex-initial" disabled>
                                         <span class="hidden sm:inline">←</span> Prev
                                     </button>
@@ -300,57 +409,6 @@
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
                                 </svg>
                                 <p class="text-lg">Select a book from the sidebar to start reading</p>
-                            </div>
-                        </div>
-
-                        <!-- Notes Section (shown when authenticated) -->
-                        <div id="notesSection" class="hidden mt-8 border-t-2 border-amber-200 pt-8">
-                            <div class="bg-gradient-to-r from-amber-50 to-blue-50 rounded-lg p-6 shadow-md">
-                                <div class="flex items-center justify-between mb-4">
-                                    <h3 class="text-2xl font-bold bg-gradient-to-r from-amber-700 to-amber-900 bg-clip-text text-transparent">
-                                        Study Notes
-                                    </h3>
-                                    <button id="toggleNotesBtn" class="px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition text-sm font-medium">
-                                        Hide Notes
-                                    </button>
-                                </div>
-
-                                <!-- Note Type Tabs -->
-                                <div class="flex gap-2 mb-4 border-b border-gray-200">
-                                    <button id="personalNotesTab" class="notes-tab px-4 py-2 font-medium border-b-2 border-amber-600 text-amber-700">
-                                        My Notes
-                                    </button>
-                                    <button id="groupNotesTab" class="notes-tab px-4 py-2 font-medium border-b-2 border-transparent text-gray-600 hover:text-gray-900">
-                                        Group Notes
-                                    </button>
-                                </div>
-
-                                <!-- Personal Notes View -->
-                                <div id="personalNotesView">
-                                    <div class="mb-4">
-                                        <button id="createPersonalNoteBtn" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium">
-                                            + Add Note
-                                        </button>
-                                    </div>
-                                    <div id="personalNotesList" class="space-y-3">
-                                        <!-- Personal notes will be inserted here -->
-                                    </div>
-                                </div>
-
-                                <!-- Group Notes View -->
-                                <div id="groupNotesView" class="hidden">
-                                    <div class="mb-4 flex gap-3 items-center">
-                                        <select id="groupNoteSelector" class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500">
-                                            <option value="">Select a study group...</option>
-                                        </select>
-                                        <button id="createGroupNoteBtn" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium" disabled>
-                                            + Add Note
-                                        </button>
-                                    </div>
-                                    <div id="groupNotesList" class="space-y-3">
-                                        <!-- Group notes will be inserted here -->
-                                    </div>
-                                </div>
                             </div>
                         </div>
                     </div>

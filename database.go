@@ -3,6 +3,8 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"log"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -11,14 +13,19 @@ import (
 
 // User represents a user in the system
 type User struct {
-	ID            int64          `json:"id"`
-	Email         string         `json:"email"`
-	Username      string         `json:"username"`
-	PasswordHash  sql.NullString `json:"-"`              // Never expose password hash
-	OAuthProvider string         `json:"oauth_provider"` // "local", "google", or "github"
-	OAuthID       sql.NullString `json:"-"`              // Don't expose OAuth ID
-	CreatedAt     time.Time      `json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
+	ID                int64          `json:"id"`
+	Email             string         `json:"email"`
+	Username          string         `json:"username"`
+	FirstName         string         `json:"first_name"`
+	LastName          string         `json:"last_name"`
+	ProfilePictureURL string         `json:"profile_picture_url"`
+	LocationCity      string         `json:"location_city"`
+	LocationState     string         `json:"location_state"`
+	PasswordHash      sql.NullString `json:"-"`              // Never expose password hash
+	OAuthProvider     string         `json:"oauth_provider"` // "local", "google", or "github"
+	OAuthID           sql.NullString `json:"-"`              // Don't expose OAuth ID
+	CreatedAt         time.Time      `json:"created_at"`
+	UpdatedAt         time.Time      `json:"updated_at"`
 }
 
 // Session represents a user session
@@ -72,6 +79,11 @@ func (d *Database) initTables() error {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			email TEXT UNIQUE NOT NULL,
 			username TEXT UNIQUE NOT NULL,
+			first_name TEXT DEFAULT '',
+			last_name TEXT DEFAULT '',
+			profile_picture_url TEXT DEFAULT '',
+			location_city TEXT DEFAULT '',
+			location_state TEXT DEFAULT '',
 			password_hash TEXT,
 			oauth_provider TEXT DEFAULT 'local',
 			oauth_id TEXT,
@@ -171,11 +183,94 @@ func (d *Database) initTables() error {
 			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_note_comments_note_id ON note_comments(note_id)`,
+		`CREATE TABLE IF NOT EXISTS prayer_requests (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			group_id INTEGER NOT NULL,
+			user_id INTEGER NOT NULL,
+			title TEXT NOT NULL,
+			content TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'active',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (group_id) REFERENCES study_groups(id) ON DELETE CASCADE,
+			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_prayer_requests_group ON prayer_requests(group_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_prayer_requests_status ON prayer_requests(group_id, status)`,
+		`CREATE TABLE IF NOT EXISTS prayer_comments (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			prayer_id INTEGER NOT NULL,
+			user_id INTEGER NOT NULL,
+			content TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (prayer_id) REFERENCES prayer_requests(id) ON DELETE CASCADE,
+			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_prayer_comments_prayer ON prayer_comments(prayer_id)`,
+		`CREATE TABLE IF NOT EXISTS reactions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			user_id INTEGER NOT NULL,
+			target_type TEXT NOT NULL,
+			target_id INTEGER NOT NULL,
+			emoji TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+			UNIQUE(user_id, target_type, target_id, emoji)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_reactions_target ON reactions(target_type, target_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_reactions_user ON reactions(user_id)`,
 	}
 
 	for _, query := range queries {
 		if _, err := d.db.Exec(query); err != nil {
 			return fmt.Errorf("failed to execute query: %w", err)
+		}
+	}
+
+	// Migrate existing users table to add profile fields
+	migrations := []string{
+		`ALTER TABLE users ADD COLUMN first_name TEXT DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN last_name TEXT DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN profile_picture_url TEXT DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN location_city TEXT DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN location_state TEXT DEFAULT ''`,
+		`ALTER TABLE prayer_requests ADD COLUMN archived_at DATETIME`,
+		`ALTER TABLE prayer_requests ADD COLUMN answer_explanation TEXT DEFAULT ''`,
+		`ALTER TABLE notes ADD COLUMN verse INTEGER`,
+		`ALTER TABLE note_comments ADD COLUMN parent_id INTEGER`,
+	}
+
+	for _, migration := range migrations {
+		// Ignore errors if column already exists
+		_, _ = d.db.Exec(migration)
+	}
+
+	// Create verse comments table for threaded comments on verses
+	verseCommentsTables := []string{
+		`CREATE TABLE IF NOT EXISTS verse_comments (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			group_id INTEGER,
+			user_id INTEGER NOT NULL,
+			book TEXT NOT NULL,
+			chapter INTEGER NOT NULL,
+			verse INTEGER NOT NULL,
+			parent_id INTEGER,
+			content TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+			FOREIGN KEY (group_id) REFERENCES study_groups(id) ON DELETE CASCADE,
+			FOREIGN KEY (parent_id) REFERENCES verse_comments(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_verse_comments_location ON verse_comments(book, chapter, verse)`,
+		`CREATE INDEX IF NOT EXISTS idx_verse_comments_group ON verse_comments(group_id, book, chapter, verse)`,
+		`CREATE INDEX IF NOT EXISTS idx_verse_comments_parent ON verse_comments(parent_id)`,
+	}
+
+	for _, query := range verseCommentsTables {
+		if _, err := d.db.Exec(query); err != nil {
+			log.Printf("Warning: failed to create verse comments table: %v", err)
 		}
 	}
 
@@ -188,7 +283,26 @@ func (d *Database) Close() error {
 }
 
 // CreateUser creates a new user with username/password
-func (d *Database) CreateUser(email, username, password string) (*User, error) {
+func (d *Database) CreateUser(email, firstName, lastName, password string) (*User, error) {
+	// Generate username from email (part before @)
+	username := email
+	if atIndex := strings.Index(email, "@"); atIndex > 0 {
+		username = email[:atIndex]
+	}
+
+	// Make username unique by appending a number if needed
+	baseUsername := username
+	counter := 1
+	for {
+		_, err := d.GetUserByUsername(username)
+		if err == sql.ErrNoRows {
+			// Username is available
+			break
+		}
+		username = fmt.Sprintf("%s%d", baseUsername, counter)
+		counter++
+	}
+
 	// Hash the password
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
@@ -196,8 +310,9 @@ func (d *Database) CreateUser(email, username, password string) (*User, error) {
 	}
 
 	result, err := d.db.Exec(
-		`INSERT INTO users (email, username, password_hash, oauth_provider) VALUES (?, ?, ?, 'local')`,
-		email, username, string(hashedPassword),
+		`INSERT INTO users (email, username, first_name, last_name, password_hash, oauth_provider) 
+		 VALUES (?, ?, ?, ?, ?, 'local')`,
+		email, username, firstName, lastName, string(hashedPassword),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create user: %w", err)
@@ -212,10 +327,30 @@ func (d *Database) CreateUser(email, username, password string) (*User, error) {
 }
 
 // CreateOAuthUser creates a new user from OAuth
-func (d *Database) CreateOAuthUser(email, username, provider, oauthID string) (*User, error) {
+func (d *Database) CreateOAuthUser(email, firstName, lastName, provider, oauthID string) (*User, error) {
+	// Generate username from email (part before @)
+	username := email
+	if atIndex := strings.Index(email, "@"); atIndex > 0 {
+		username = email[:atIndex]
+	}
+
+	// Make username unique by appending a number if needed
+	baseUsername := username
+	counter := 1
+	for {
+		_, err := d.GetUserByUsername(username)
+		if err == sql.ErrNoRows {
+			// Username is available
+			break
+		}
+		username = fmt.Sprintf("%s%d", baseUsername, counter)
+		counter++
+	}
+
 	result, err := d.db.Exec(
-		`INSERT INTO users (email, username, oauth_provider, oauth_id) VALUES (?, ?, ?, ?)`,
-		email, username, provider, oauthID,
+		`INSERT INTO users (email, username, first_name, last_name, oauth_provider, oauth_id) 
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		email, username, firstName, lastName, provider, oauthID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create OAuth user: %w", err)
@@ -233,10 +368,12 @@ func (d *Database) CreateOAuthUser(email, username, provider, oauthID string) (*
 func (d *Database) GetUserByID(id int64) (*User, error) {
 	user := &User{}
 	err := d.db.QueryRow(
-		`SELECT id, email, username, password_hash, oauth_provider, oauth_id, created_at, updated_at 
+		`SELECT id, email, username, first_name, last_name, profile_picture_url, location_city, location_state,
+		        password_hash, oauth_provider, oauth_id, created_at, updated_at 
 		 FROM users WHERE id = ?`,
 		id,
-	).Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.OAuthProvider,
+	).Scan(&user.ID, &user.Email, &user.Username, &user.FirstName, &user.LastName, &user.ProfilePictureURL,
+		&user.LocationCity, &user.LocationState, &user.PasswordHash, &user.OAuthProvider,
 		&user.OAuthID, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -248,10 +385,12 @@ func (d *Database) GetUserByID(id int64) (*User, error) {
 func (d *Database) GetUserByEmail(email string) (*User, error) {
 	user := &User{}
 	err := d.db.QueryRow(
-		`SELECT id, email, username, password_hash, oauth_provider, oauth_id, created_at, updated_at 
+		`SELECT id, email, username, first_name, last_name, profile_picture_url, location_city, location_state,
+		        password_hash, oauth_provider, oauth_id, created_at, updated_at 
 		 FROM users WHERE email = ?`,
 		email,
-	).Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.OAuthProvider,
+	).Scan(&user.ID, &user.Email, &user.Username, &user.FirstName, &user.LastName, &user.ProfilePictureURL,
+		&user.LocationCity, &user.LocationState, &user.PasswordHash, &user.OAuthProvider,
 		&user.OAuthID, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -263,10 +402,12 @@ func (d *Database) GetUserByEmail(email string) (*User, error) {
 func (d *Database) GetUserByUsername(username string) (*User, error) {
 	user := &User{}
 	err := d.db.QueryRow(
-		`SELECT id, email, username, password_hash, oauth_provider, oauth_id, created_at, updated_at 
+		`SELECT id, email, username, first_name, last_name, profile_picture_url, location_city, location_state,
+		        password_hash, oauth_provider, oauth_id, created_at, updated_at 
 		 FROM users WHERE username = ?`,
 		username,
-	).Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.OAuthProvider,
+	).Scan(&user.ID, &user.Email, &user.Username, &user.FirstName, &user.LastName, &user.ProfilePictureURL,
+		&user.LocationCity, &user.LocationState, &user.PasswordHash, &user.OAuthProvider,
 		&user.OAuthID, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -278,10 +419,12 @@ func (d *Database) GetUserByUsername(username string) (*User, error) {
 func (d *Database) GetUserByOAuth(provider, oauthID string) (*User, error) {
 	user := &User{}
 	err := d.db.QueryRow(
-		`SELECT id, email, username, password_hash, oauth_provider, oauth_id, created_at, updated_at 
+		`SELECT id, email, username, first_name, last_name, profile_picture_url, location_city, location_state,
+		        password_hash, oauth_provider, oauth_id, created_at, updated_at 
 		 FROM users WHERE oauth_provider = ? AND oauth_id = ?`,
 		provider, oauthID,
-	).Scan(&user.ID, &user.Email, &user.Username, &user.PasswordHash, &user.OAuthProvider,
+	).Scan(&user.ID, &user.Email, &user.Username, &user.FirstName, &user.LastName, &user.ProfilePictureURL,
+		&user.LocationCity, &user.LocationState, &user.PasswordHash, &user.OAuthProvider,
 		&user.OAuthID, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -296,6 +439,20 @@ func (d *Database) VerifyPassword(user *User, password string) bool {
 	}
 	err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash.String), []byte(password))
 	return err == nil
+}
+
+// UpdateProfile updates a user's profile information
+func (d *Database) UpdateProfile(userID int64, firstName, lastName, profilePictureURL, locationCity, locationState string) error {
+	_, err := d.db.Exec(
+		`UPDATE users SET first_name = ?, last_name = ?, profile_picture_url = ?, 
+		 location_city = ?, location_state = ?, updated_at = CURRENT_TIMESTAMP 
+		 WHERE id = ?`,
+		firstName, lastName, profilePictureURL, locationCity, locationState, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update profile: %w", err)
+	}
+	return nil
 }
 
 // CreateSession creates a new session for a user

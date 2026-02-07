@@ -3,6 +3,7 @@ module github.com/jmainguy/bible-soh-re
 go 1.25.4
 
 require (
+	github.com/gorilla/websocket v1.5.3
 	github.com/jlaffaye/ftp v0.2.0
 	github.com/mattn/go-sqlite3 v1.14.24
 	golang.org/x/crypto v0.32.0

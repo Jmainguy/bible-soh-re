@@ -4,9 +4,41 @@ let currentBook = null;
 let currentChapter = 1;
 let maxChapter = 1;
 let showReferences = false; // Toggle for showing/hiding references
+let showVerseComments = false; // Toggle for showing/hiding verse comments
+let selectedCommentGroup = null; // null for personal, groupID for group comments
+let userGroups = []; // Available study groups for the user
 let selectedTranslation = ''; // Currently selected translation
 let translationInfo = {}; // Translation metadata (fullName, description)
 let sidebarVisible = true; // Sidebar visibility state
+let currentUserId = null; // Current authenticated user ID
+
+// Load UI preferences from localStorage
+function loadUIPreferences() {
+    try {
+        const prefs = localStorage.getItem('uiPreferences');
+        if (prefs) {
+            const parsed = JSON.parse(prefs);
+            showReferences = parsed.showReferences !== undefined ? parsed.showReferences : false;
+            showVerseComments = parsed.showVerseComments !== undefined ? parsed.showVerseComments : false;
+            selectedCommentGroup = parsed.selectedCommentGroup !== undefined ? parsed.selectedCommentGroup : null;
+        }
+    } catch (error) {
+        console.error('Failed to load UI preferences:', error);
+    }
+}
+
+// Save UI preferences to localStorage
+function saveUIPreferences() {
+    try {
+        localStorage.setItem('uiPreferences', JSON.stringify({
+            showReferences,
+            showVerseComments,
+            selectedCommentGroup
+        }));
+    } catch (error) {
+        console.error('Failed to save UI preferences:', error);
+    }
+}
 
 // DOM Elements
 const bookList = document.getElementById('bookList');
@@ -17,6 +49,8 @@ const nextChapterBtn = document.getElementById('nextChapter');
 const chapterSelector = document.getElementById('chapterSelector');
 const chapterSelect = document.getElementById('chapterSelect');
 const toggleReferencesBtn = document.getElementById('toggleReferences');
+const toggleVerseCommentsBtn = document.getElementById('toggleVerseComments');
+const verseCommentsGroupSelect = document.getElementById('verseCommentsGroupSelect');
 const translationSelect = document.getElementById('translationSelect');
 const toggleSidebarBtn = document.getElementById('toggleSidebar');
 const sidebar = document.getElementById('sidebar');
@@ -74,6 +108,12 @@ function scrollToVerse(verseNum) {
 async function init() {
     // Check authentication status
     await checkAuthStatus();
+    
+    // Load UI preferences from localStorage
+    loadUIPreferences();
+    
+    // Connect to WebSocket for real-time updates
+    connectWebSocket();
     
     // Hide sidebar on mobile by default
     if (window.innerWidth <= 1024) {
@@ -311,7 +351,7 @@ async function loadChapter() {
         chapterSelect.value = currentChapter;
         
         // Render verses
-        renderVerses(data.verses);
+        await renderVerses(data.verses);
         
         // Update navigation buttons - only disable at absolute boundaries
         const currentIndex = bibleBooks.findIndex(b => b.name === currentBook);
@@ -340,7 +380,7 @@ async function loadChapter() {
 }
 
 // Render verses in the container
-function renderVerses(verses) {
+async function renderVerses(verses) {
     versesContainer.innerHTML = '';
     
     if (!verses || verses.length === 0) {
@@ -375,6 +415,19 @@ function renderVerses(verses) {
     if (!showReferences) {
         container.classList.add('hide-references');
     }
+    if (!showVerseComments) {
+        container.classList.add('hide-verse-comments');
+    }
+    
+    // Load all verse comments if enabled
+    const verseCommentsMap = new Map();
+    if (showVerseComments && currentUserId) {
+        const commentPromises = verses.map(v => loadVerseComments(currentBook, currentChapter, v.verse));
+        const allComments = await Promise.all(commentPromises);
+        verses.forEach((v, idx) => {
+            verseCommentsMap.set(v.verse, allComments[idx] || []);
+        });
+    }
     
     verses.forEach((verseData) => {
         const verseNum = verseData.verse;
@@ -403,6 +456,21 @@ function renderVerses(verses) {
             <a href="${verseUrl}" class="verse-number" title="Click to copy link, right-click to open in new tab">${verseNum}</a>
             <span class="verse-text">${formatVerseText(verseText, verseNum)}</span>
         `;
+        
+        // Add inline + button for verse comments if enabled and no comments exist
+        if (showVerseComments && verseCommentsMap.has(verseNum)) {
+            const comments = verseCommentsMap.get(verseNum);
+            const commentCount = countTotalComments(comments);
+            if (commentCount === 0) {
+                html += `<button class="verse-comment-add-btn" onclick="showAddCommentForm('${escapeHtml(currentBook)}', ${currentChapter}, ${verseNum})" 
+                        style="padding: 0.125rem 0.25rem; background-color: #9333ea; color: white; border-radius: 0.25rem; font-size: 0.7rem; cursor: pointer; border: none; margin-left: 0.25rem; vertical-align: middle;"
+                        title="Add a note to this verse">
+                    <svg style="width: 7px; height: 7px; display: inline;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M12 4v16m8-8H4"></path>
+                    </svg>
+                </button>`;
+            }
+        }
         
         // Add cross-references if they exist and should be shown
         if (crossReferences.length > 0 && showReferences) {
@@ -439,6 +507,12 @@ function renderVerses(verses) {
                     <span class="font-semibold">Study note: ${marker}</span>${createReferenceLink(noteText)}
                 </div>`;
             });
+        }
+        
+        // Add verse comments if they exist and should be shown
+        if (showVerseComments && verseCommentsMap.has(verseNum)) {
+            const comments = verseCommentsMap.get(verseNum);
+            html += renderVerseCommentsSection(currentBook, currentChapter, verseNum, comments);
         }
         
         verseDiv.innerHTML = html;
@@ -675,6 +749,19 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// Helper function to generate profile picture HTML
+function getProfilePictureHTML(user, size = 'w-8 h-8') {
+    if (user.profile_picture_url) {
+        return `<img src="${escapeHtml(user.profile_picture_url)}" class="${size} rounded-full object-cover flex-shrink-0" alt="Profile">`;
+    }
+    
+    const initials = user.first_name && user.last_name 
+        ? (user.first_name[0] + user.last_name[0]).toUpperCase() 
+        : user.username[0].toUpperCase();
+    
+    return `<div class="${size} rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">${initials}</div>`;
+}
+
 // Navigate to next book
 function goToNextBook() {
     const currentIndex = bibleBooks.findIndex(b => b.name === currentBook);
@@ -774,7 +861,7 @@ function setupEventListeners() {
     
     // Toggle references button
     if (toggleReferencesBtn) {
-        // Set initial button text based on default state
+        // Set initial button text based on restored state
         toggleReferencesBtn.innerHTML = showReferences 
             ? '<svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg> Hide References'
             : '<svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path></svg> Show References';
@@ -784,7 +871,41 @@ function setupEventListeners() {
             toggleReferencesBtn.innerHTML = showReferences 
                 ? '<svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg> Hide References'
                 : '<svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path></svg> Show References';
+            saveUIPreferences(); // Save preference
             loadChapter(); // Reload to apply change
+        });
+    }
+    
+    // Toggle verse comments button
+    if (toggleVerseCommentsBtn) {
+        // Set initial button text based on restored state
+        toggleVerseCommentsBtn.innerHTML = showVerseComments 
+            ? '<svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg> <span class="hidden sm:inline">Hide Notes</span>'
+            : '<svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg> <span class="hidden sm:inline">Show Notes</span>';
+        
+        toggleVerseCommentsBtn.addEventListener('click', () => {
+            showVerseComments = !showVerseComments;
+            toggleVerseCommentsBtn.innerHTML = showVerseComments 
+                ? '<svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg> <span class="hidden sm:inline">Hide Notes</span>'
+                : '<svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg> <span class="hidden sm:inline">Show Notes</span>';
+            saveUIPreferences(); // Save preference
+            loadChapter(); // Reload to apply change
+        });
+    }
+    
+    // Verse comments group selector
+    if (verseCommentsGroupSelect) {
+        // Restore selected group from preferences
+        if (selectedCommentGroup !== null) {
+            verseCommentsGroupSelect.value = selectedCommentGroup;
+        }
+        
+        verseCommentsGroupSelect.addEventListener('change', (e) => {
+            selectedCommentGroup = e.target.value ? parseInt(e.target.value) : null;
+            saveUIPreferences(); // Save preference
+            if (showVerseComments) {
+                loadChapter(); // Reload to load comments for selected group
+            }
         });
     }
     
@@ -1006,73 +1127,130 @@ async function checkAuthStatus() {
         const userEmail = document.getElementById('userEmail');
         const userMenuButton = document.getElementById('userMenuButton');
         const userDropdown = document.getElementById('userDropdown');
+        const communityMenu = document.getElementById('communityMenu');
+        const communityMenuButton = document.getElementById('communityMenuButton');
+        const communityDropdown = document.getElementById('communityDropdown');
         
         if (data.authenticated) {
-            // Show user menu, hide login button
+            // Show user menu and community menu, hide login button
             userMenu.classList.remove('hidden');
+            communityMenu.classList.remove('hidden');
             loginButton.classList.add('hidden');
-            userName.textContent = data.username;
+            
+            // Display first + last name instead of username
+            const displayName = data.first_name && data.last_name 
+                ? `${data.first_name} ${data.last_name}` 
+                : data.username;
+            userName.textContent = displayName;
             userEmail.textContent = data.email;
             currentUserId = data.id;
             
-            // Setup dropdown toggle
+            // Update profile picture in user menu
+            const userPicDiv = document.getElementById('userProfilePic');
+            if (userPicDiv) {
+                userPicDiv.innerHTML = getProfilePictureHTML(data, 'w-8 h-8');
+            }
+            
+            // Setup user dropdown toggle
             userMenuButton.addEventListener('click', (e) => {
                 e.stopPropagation();
                 userDropdown.classList.toggle('hidden');
+                communityDropdown.classList.add('hidden'); // Close community dropdown
             });
             
-            // Close dropdown when clicking outside
+            // Setup community dropdown toggle
+            communityMenuButton.addEventListener('click', (e) => {
+                e.stopPropagation();
+                communityDropdown.classList.toggle('hidden');
+                userDropdown.classList.add('hidden'); // Close user dropdown
+            });
+            
+            // Close dropdowns when clicking outside
             document.addEventListener('click', (e) => {
                 if (!userMenu.contains(e.target)) {
                     userDropdown.classList.add('hidden');
                 }
+                if (!communityMenu.contains(e.target)) {
+                    communityDropdown.classList.add('hidden');
+                }
             });
             
-            // Initialize notes functionality for authenticated users
-            initializeNotes();
+            // Load user groups for verse comments
+            loadUserGroupsForComments();
         } else {
-            // Show login button, hide user menu
+            // Show login button, hide user menu and community menu
             userMenu.classList.add('hidden');
+            communityMenu.classList.add('hidden');
             loginButton.classList.remove('hidden');
         }
     } catch (error) {
         console.error('Failed to check auth status:', error);
         // On error, show login button
         document.getElementById('userMenu').classList.add('hidden');
+        document.getElementById('communityMenu').classList.add('hidden');
         document.getElementById('loginButton').classList.remove('hidden');
     }
 }
 
-// ============ NOTES FUNCTIONALITY ============
+// ============ VERSE COMMENTS (INLINE NOTES) ============
 
-let notesVisible = false;
-let currentNoteType = 'personal'; // 'personal' or 'group'
-let selectedGroupId = null;
-let userGroups = [];
-let currentUserId = null;
-let notesPollingInterval = null;
-let currentNotesData = null; // Cache of current notes for comparison
-let openCommentsSections = new Set(); // Track which comment sections are open
-let commentsData = new Map(); // Cache of comments data for comparison
-
-// Initialize notes functionality
-function initializeNotes() {
-    const notesSection = document.getElementById('notesSection');
-    const toggleNotesBtn = document.getElementById('toggleNotesBtn');
-    const personalNotesTab = document.getElementById('personalNotesTab');
-    const groupNotesTab = document.getElementById('groupNotesTab');
+// Load user groups for verse comments dropdown
+async function loadUserGroupsForComments() {
     const createPersonalNoteBtn = document.getElementById('createPersonalNoteBtn');
     const createGroupNoteBtn = document.getElementById('createGroupNoteBtn');
     const groupNoteSelector = document.getElementById('groupNoteSelector');
     
-    // Show notes section and make notes visible by default for authenticated users
+    // Show notes section and apply saved visibility state
     notesSection.classList.remove('hidden');
-    notesVisible = true;
-    toggleNotesBtn.textContent = 'Hide Notes';
-    document.getElementById('personalNotesView').classList.remove('hidden');
+    toggleNotesBtn.textContent = notesVisible ? 'Hide Notes' : 'Show Notes';
     
-    // Start polling for authenticated users
-    startNotesPolling();
+    // Apply saved note type (personal vs group)
+    if (currentNoteType === 'group') {
+        groupNotesTab.classList.add('border-amber-600', 'text-amber-700');
+        groupNotesTab.classList.remove('border-transparent', 'text-gray-600');
+        personalNotesTab.classList.remove('border-amber-600', 'text-amber-700');
+        personalNotesTab.classList.add('border-transparent', 'text-gray-600');
+        document.getElementById('groupNotesView').classList.remove('hidden');
+        document.getElementById('personalNotesView').classList.add('hidden');
+    } else {
+        personalNotesTab.classList.add('border-amber-600', 'text-amber-700');
+        personalNotesTab.classList.remove('border-transparent', 'text-gray-600');
+        groupNotesTab.classList.remove('border-amber-600', 'text-amber-700');
+        groupNotesTab.classList.add('border-transparent', 'text-gray-600');
+        document.getElementById('personalNotesView').classList.remove('hidden');
+        document.getElementById('groupNotesView').classList.add('hidden');
+    }
+    
+    // Apply visibility state to views and enable/disable controls
+    if (notesVisible) {
+        if (currentNoteType === 'personal') {
+            document.getElementById('personalNotesView').classList.remove('hidden');
+            // Disable group selector when on personal tab
+            groupNoteSelector.disabled = true;
+        } else {
+            document.getElementById('groupNotesView').classList.remove('hidden');
+            // Enable group selector when on group tab
+            groupNoteSelector.disabled = false;
+            // Load groups when restoring group notes state
+            loadUserGroups();
+        }
+        // Enable tabs
+        personalNotesTab.disabled = false;
+        groupNotesTab.disabled = false;
+        personalNotesTab.classList.remove('opacity-50', 'cursor-not-allowed');
+        groupNotesTab.classList.remove('opacity-50', 'cursor-not-allowed');
+        startNotesPolling();
+    } else {
+        document.getElementById('personalNotesView').classList.add('hidden');
+        document.getElementById('groupNotesView').classList.add('hidden');
+        // Disable tabs
+        personalNotesTab.disabled = true;
+        groupNotesTab.disabled = true;
+        personalNotesTab.classList.add('opacity-50', 'cursor-not-allowed');
+        groupNotesTab.classList.add('opacity-50', 'cursor-not-allowed');
+        // Disable group selector
+        groupNoteSelector.disabled = true;
+    }
     
     // Toggle notes visibility
     toggleNotesBtn.addEventListener('click', () => {
@@ -1081,8 +1259,21 @@ function initializeNotes() {
         const groupNotesView = document.getElementById('groupNotesView');
         
         if (notesVisible) {
-            personalNotesView.classList.remove('hidden');
+            if (currentNoteType === 'personal') {
+                personalNotesView.classList.remove('hidden');
+            } else {
+                groupNotesView.classList.remove('hidden');
+            }
             toggleNotesBtn.textContent = 'Hide Notes';
+            // Enable tabs
+            personalNotesTab.disabled = false;
+            groupNotesTab.disabled = false;
+            personalNotesTab.classList.remove('opacity-50', 'cursor-not-allowed');
+            groupNotesTab.classList.remove('opacity-50', 'cursor-not-allowed');
+            // Enable group selector if on group tab
+            if (currentNoteType === 'group') {
+                groupNoteSelector.disabled = false;
+            }
             if (currentBook && currentChapter) {
                 loadNotes();
             }
@@ -1091,12 +1282,21 @@ function initializeNotes() {
             personalNotesView.classList.add('hidden');
             groupNotesView.classList.add('hidden');
             toggleNotesBtn.textContent = 'Show Notes';
+            // Disable tabs
+            personalNotesTab.disabled = true;
+            groupNotesTab.disabled = true;
+            personalNotesTab.classList.add('opacity-50', 'cursor-not-allowed');
+            groupNotesTab.classList.add('opacity-50', 'cursor-not-allowed');
+            // Disable group selector
+            groupNoteSelector.disabled = true;
             stopNotesPolling();
         }
+        saveUIPreferences(); // Save preference
     });
     
     // Tab switching
     personalNotesTab.addEventListener('click', () => {
+        if (personalNotesTab.disabled) return;
         currentNoteType = 'personal';
         personalNotesTab.classList.add('border-amber-600', 'text-amber-700');
         personalNotesTab.classList.remove('border-transparent', 'text-gray-600');
@@ -1104,11 +1304,15 @@ function initializeNotes() {
         groupNotesTab.classList.add('border-transparent', 'text-gray-600');
         document.getElementById('personalNotesView').classList.remove('hidden');
         document.getElementById('groupNotesView').classList.add('hidden');
+        // Disable group selector when on personal tab
+        groupNoteSelector.disabled = true;
         if (currentBook && currentChapter) loadPersonalNotes();
+        saveUIPreferences(); // Save preference
         restartNotesPolling();
     });
     
     groupNotesTab.addEventListener('click', () => {
+        if (groupNotesTab.disabled) return;
         currentNoteType = 'group';
         groupNotesTab.classList.add('border-amber-600', 'text-amber-700');
         groupNotesTab.classList.remove('border-transparent', 'text-gray-600');
@@ -1116,7 +1320,10 @@ function initializeNotes() {
         personalNotesTab.classList.add('border-transparent', 'text-gray-600');
         document.getElementById('groupNotesView').classList.remove('hidden');
         document.getElementById('personalNotesView').classList.add('hidden');
+        // Enable group selector when on group tab
+        groupNoteSelector.disabled = false;
         loadUserGroups();
+        saveUIPreferences(); // Save preference
         restartNotesPolling();
     });
     
@@ -1137,12 +1344,8 @@ function initializeNotes() {
         selectedGroupId = e.target.value ? parseInt(e.target.value) : null;
         createGroupNoteBtn.disabled = !selectedGroupId;
         
-        // Save to localStorage
-        if (selectedGroupId) {
-            localStorage.setItem('lastSelectedGroupId', selectedGroupId.toString());
-        } else {
-            localStorage.removeItem('lastSelectedGroupId');
-        }
+        // Save to unified preferences
+        saveUIPreferences();
         
         if (selectedGroupId && currentBook && currentChapter) {
             loadGroupNotes(selectedGroupId);
@@ -1290,11 +1493,9 @@ async function loadUserGroups() {
         selector.innerHTML = '<option value="">Select a study group...</option>' +
             userGroups.map(g => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join('');
         
-        // Restore last selected group from localStorage
-        const lastGroupId = localStorage.getItem('lastSelectedGroupId');
-        if (lastGroupId && userGroups.some(g => g.id.toString() === lastGroupId)) {
-            selector.value = lastGroupId;
-            selectedGroupId = parseInt(lastGroupId);
+        // Restore selected group from unified preferences
+        if (selectedGroupId && userGroups.some(g => g.id === selectedGroupId)) {
+            selector.value = selectedGroupId.toString();
             createGroupNoteBtn.disabled = false;
             if (currentBook && currentChapter) {
                 loadGroupNotes(selectedGroupId);
@@ -1325,12 +1526,15 @@ function displayNotes(notes, containerId, currentUserId) {
         return `
         <div class="bg-white rounded-lg p-4 shadow-sm border border-gray-200 ${isTemp ? 'opacity-70' : ''}" id="note-${note.id}">
             <div class="flex items-start justify-between mb-2">
-                <div class="flex-1">
-                    <p class="text-sm font-medium text-gray-700">
-                        ${escapeHtml(note.username)}
-                        ${isTemp ? '<span class="ml-2 text-xs text-amber-600">⏳ Saving...</span>' : ''}
-                    </p>
-                    <p class="text-xs text-gray-500">${new Date(note.created_at).toLocaleString()}</p>
+                <div class="flex items-start gap-2 flex-1">
+                    ${getProfilePictureHTML(note, 'w-8 h-8')}
+                    <div class="flex-1 min-w-0">
+                        <p class="text-sm font-medium text-gray-700">
+                            ${note.first_name && note.last_name ? escapeHtml(`${note.first_name} ${note.last_name}`) : escapeHtml(note.username)}
+                            ${isTemp ? '<span class="ml-2 text-xs text-amber-600">⏳ Saving...</span>' : ''}
+                        </p>
+                        <p class="text-xs text-gray-500">${new Date(note.created_at).toLocaleString()}</p>
+                    </div>
                 </div>
                 ${canEdit && !isTemp ? `
                     <div class="flex gap-2">
@@ -1342,18 +1546,28 @@ function displayNotes(notes, containerId, currentUserId) {
                 ` : ''}
             </div>
             <p class="text-gray-800 whitespace-pre-wrap">${escapeHtml(note.content)}</p>
-            <div class="mt-3 pt-3 border-t border-gray-100">
-                <button onclick="toggleComments('${note.id}')" 
-                        class="text-sm text-blue-600 hover:text-blue-800" ${isTemp ? 'disabled' : ''}>
-                    💬 Comments
-                </button>
-                <div id="comments-${note.id}" class="hidden mt-3 space-y-2">
-                    <!-- Comments will be loaded here -->
-                </div>
+            <div id="reactions-note-${note.id}" class="flex flex-wrap gap-1 items-center mt-2">
+                ${isTemp ? '' : '<span class="text-xs text-gray-400">Loading reactions...</span>'}
+            </div>
+            <div class="mt-3 pt-3 border-t border-gray-100" id="comments-section-${note.id}">
+                <!-- Comments will be loaded here automatically -->
             </div>
         </div>
         `;
     }).join('');
+    
+    // Load reactions for each note after rendering
+    if (notes && notes.length > 0) {
+        setTimeout(() => {
+            notes.forEach(note => {
+                if (!String(note.id).startsWith('temp-')) {
+                    loadReactions('note', note.id);
+                    // Load comments automatically for each note
+                    loadNoteCommentsInline(note.id);
+                }
+            });
+        }, 0);
+    }
 }
 
 // Modal helper functions
@@ -1564,108 +1778,8 @@ async function deleteNote(noteId) {
     });
 }
 
-// Toggle comments visibility
-async function toggleComments(noteId) {
-    // Prevent opening comments on temporary notes
-    if (String(noteId).startsWith('temp-')) {
-        return;
-    }
-    
-    const commentsDiv = document.getElementById(`comments-${noteId}`);
-    
-    if (commentsDiv.classList.contains('hidden')) {
-        commentsDiv.classList.remove('hidden');
-        openCommentsSections.add(noteId);
-        await loadComments(noteId);
-    } else {
-        commentsDiv.classList.add('hidden');
-        openCommentsSections.delete(noteId);
-        commentsData.delete(noteId);
-    }
-}
-
-// Load comments for a note
-async function loadComments(noteId) {
-    try {
-        const response = await fetch(`/api/notes/${noteId}/comments`);
-        if (!response.ok) throw new Error('Failed to load comments');
-        const comments = await response.json();
-        
-        commentsData.set(noteId, JSON.stringify(comments));
-        await updateCommentsDisplay(noteId, comments);
-    } catch (error) {
-        console.error('Error loading comments:', error);
-    }
-}
-
-// Update comments display
-async function updateCommentsDisplay(noteId, comments) {
-    const commentsDiv = document.getElementById(`comments-${noteId}`);
-    if (!commentsDiv) return;
-    
-    commentsDiv.innerHTML = `
-        <div class="bg-gray-50 rounded p-3 space-y-2">
-            ${comments.length === 0 ? '<p class="text-gray-500 text-xs italic">No comments yet.</p>' : ''}
-            ${comments.map(c => `
-                <div class="bg-white rounded p-2 text-sm" id="comment-${c.id}">
-                    <div class="flex items-start justify-between mb-1">
-                        <span class="font-medium text-xs text-gray-700">${escapeHtml(c.username)}</span>
-                        <span class="text-xs text-gray-500">${new Date(c.created_at).toLocaleString()}</span>
-                    </div>
-                    <p class="text-gray-800 text-xs">${escapeHtml(c.content)}</p>
-                </div>
-            `).join('')}
-            <div class="mt-2">
-                <button onclick="addComment(${noteId})" 
-                        class="text-xs text-blue-600 hover:text-blue-800">
-                    + Add Comment
-                </button>
-            </div>
-        </div>
-    `;
-}
-
-// Add a comment
-async function addComment(noteId) {
-    showNoteEditor('Add Comment', '', async (content) => {
-        // Optimistic update - add comment to UI immediately
-        const optimisticComment = {
-            id: 'temp-' + Date.now(),
-            note_id: noteId,
-            user_id: currentUserId,
-            username: document.getElementById('userName').textContent,
-            content: content,
-            created_at: new Date().toISOString()
-        };
-        
-        await addCommentToUI(noteId, optimisticComment);
-        
-        try {
-            const response = await fetch('/api/comments/create', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    note_id: noteId,
-                    content: content
-                })
-            });
-            
-            if (!response.ok) {
-                // Revert on error
-                commentsData.delete(noteId);
-                await loadComments(noteId);
-                throw new Error('Failed to create comment');
-            }
-            
-            // Force refresh to get real comment
-            commentsData.delete(noteId);
-            await loadComments(noteId);
-        } catch (error) {
-            console.error('Error creating comment:', error);
-            showNoteMessage('Error', 'Failed to create comment');
-        }
-    });
-}
+// These old functions have been replaced by the threaded comment system below
+// (loadNoteCommentsInline, renderNoteCommentsSection, renderNoteComment, etc.)
 
 // Optimistic UI update helpers
 function addNoteToUI(note) {
@@ -1683,12 +1797,15 @@ function addNoteToUI(note) {
     noteDiv.id = `note-${note.id}`;
     noteDiv.innerHTML = `
         <div class="flex items-start justify-between mb-2">
-            <div class="flex-1">
-                <p class="text-sm font-medium text-gray-700">
-                    ${escapeHtml(note.username)}
-                    ${isTemp ? '<span class="ml-2 text-xs text-amber-600">⏳ Saving...</span>' : ''}
-                </p>
-                <p class="text-xs text-gray-500">${new Date(note.created_at).toLocaleString()}</p>
+            <div class="flex items-start gap-2 flex-1">
+                ${getProfilePictureHTML(note, 'w-8 h-8')}
+                <div class="flex-1 min-w-0">
+                    <p class="text-sm font-medium text-gray-700">
+                        ${note.first_name && note.last_name ? escapeHtml(`${note.first_name} ${note.last_name}`) : escapeHtml(note.username)}
+                        ${isTemp ? '<span class="ml-2 text-xs text-amber-600">⏳ Saving...</span>' : ''}
+                    </p>
+                    <p class="text-xs text-gray-500">${new Date(note.created_at).toLocaleString()}</p>
+                </div>
             </div>
             ${canEdit && !isTemp ? `
                 <div class="flex gap-2">
@@ -1700,15 +1817,9 @@ function addNoteToUI(note) {
             ` : ''}
         </div>
         <p class="text-gray-800 whitespace-pre-wrap">${escapeHtml(note.content)}</p>
-        <div class="mt-3 pt-3 border-t border-gray-100">
-            <button onclick="toggleComments('${note.id}')" 
-                    class="text-sm text-blue-600 hover:text-blue-800" ${isTemp ? 'disabled' : ''}>
-                💬 Comments
-            </button>
-            <div id="comments-${note.id}" class="hidden mt-3 space-y-2">
-                <!-- Comments will be loaded here -->
-            </div>
-        </div>
+        ${isTemp ? '' : `<div class="mt-3 pt-3 border-t border-gray-100" id="comments-section-${note.id}">
+            <!-- Comments will be loaded here automatically -->
+        </div>`}
     `;
     
     // Add to top of list
@@ -1718,6 +1829,14 @@ function addNoteToUI(note) {
         // Replace "no notes" message if it exists
         container.innerHTML = '';
         container.appendChild(noteDiv);
+    }
+    
+    // Load comments inline for non-temp notes
+    if (!isTemp) {
+        setTimeout(() => {
+            loadReactions('note', note.id);
+            loadNoteCommentsInline(note.id);
+        }, 0);
     }
 }
 
@@ -1748,9 +1867,12 @@ function replaceNoteInUI(tempId, realNote) {
     noteDiv.id = `note-${realNote.id}`;
     noteDiv.innerHTML = `
         <div class="flex items-start justify-between mb-2">
-            <div class="flex-1">
-                <p class="text-sm font-medium text-gray-700">${escapeHtml(realNote.username)}</p>
-                <p class="text-xs text-gray-500">${new Date(realNote.created_at).toLocaleString()}</p>
+            <div class="flex items-start gap-2 flex-1">
+                ${getProfilePictureHTML(realNote, 'w-8 h-8')}
+                <div class="flex-1 min-w-0">
+                    <p class="text-sm font-medium text-gray-700">${realNote.first_name && realNote.last_name ? escapeHtml(`${realNote.first_name} ${realNote.last_name}`) : escapeHtml(realNote.username)}</p>
+                    <p class="text-xs text-gray-500">${new Date(realNote.created_at).toLocaleString()}</p>
+                </div>
             </div>
             ${canEdit ? `
                 <div class="flex gap-2">
@@ -1762,19 +1884,19 @@ function replaceNoteInUI(tempId, realNote) {
             ` : ''}
         </div>
         <p class="text-gray-800 whitespace-pre-wrap">${escapeHtml(realNote.content)}</p>
-        <div class="mt-3 pt-3 border-t border-gray-100">
-            <button onclick="toggleComments('${realNote.id}')" 
-                    class="text-sm text-blue-600 hover:text-blue-800">
-                💬 Comments
-            </button>
-            <div id="comments-${realNote.id}" class="hidden mt-3 space-y-2">
-                <!-- Comments will be loaded here -->
-            </div>
+        <div class="mt-3 pt-3 border-t border-gray-100" id="comments-section-${realNote.id}">
+            <!-- Comments will be loaded here automatically -->
         </div>
     `;
     
     // Replace the temp element with the real one
     tempElement.replaceWith(noteDiv);
+    
+    // Load comments inline for the real note
+    setTimeout(() => {
+        loadReactions('note', realNote.id);
+        loadNoteCommentsInline(realNote.id);
+    }, 0);
 }
 
 function updateNoteContentInUI(noteId, newContent) {
@@ -1794,45 +1916,836 @@ function updateNoteContentInUI(noteId, newContent) {
     }
 }
 
-async function addCommentToUI(noteId, comment) {
-    const commentsDiv = document.getElementById(`comments-${noteId}`);
-    if (!commentsDiv) return;
+// Load user groups for verse comments dropdown
+async function loadUserGroupsForComments() {
+    if (!section) return;
     
-    // If comments section is open, add the comment
-    if (!commentsDiv.classList.contains('hidden')) {
-        const commentDiv = document.createElement('div');
-        commentDiv.className = 'bg-white rounded p-2 text-sm';
-        commentDiv.id = `comment-${comment.id}`;
-        commentDiv.innerHTML = `
-            <div class="flex items-start justify-between mb-1">
-                <span class="font-medium text-xs text-gray-700">${escapeHtml(comment.username)}</span>
-                <span class="text-xs text-gray-500">${new Date(comment.created_at).toLocaleString()}</span>
-            </div>
-            <p class="text-gray-800 text-xs">${escapeHtml(comment.content)}</p>
-        `;
+    try {
+        const response = await fetch(`/api/notes/${noteId}/comments`);
+        if (!response.ok) throw new Error('Failed to load comments');
+        const comments = await response.json();
         
-        const commentsContainer = commentsDiv.querySelector('.bg-gray-50');
-        if (commentsContainer) {
-            // Remove "no comments" message if it exists
-            const noCommentsMsg = commentsContainer.querySelector('.text-gray-500.italic');
-            if (noCommentsMsg) {
-                noCommentsMsg.remove();
-            }
-            
-            // Add before the "Add Comment" button
-            const addBtn = commentsContainer.querySelector('.mt-2');
-            if (addBtn) {
-                commentsContainer.insertBefore(commentDiv, addBtn);
-            }
-        }
+        renderNoteCommentsSection(noteId, comments, section);
+    } catch (error) {
+        console.error('Error loading note comments:', error);
+        section.innerHTML = '<p class="text-xs text-red-500">Failed to load comments</p>';
     }
 }
+
+// Render note comments section with threading
+function renderNoteCommentsSection(noteId, comments, section) {
+    // Handle null or undefined comments
+    const safeComments = comments || [];
+    const commentCount = countNoteComments(safeComments);
+    
+    section.innerHTML = `
+        <div class="space-y-2">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <strong style="color: #7c3aed; font-size: 0.875rem;">${commentCount} ${commentCount === 1 ? 'Comment' : 'Comments'}</strong>
+                <button onclick="showAddNoteCommentForm(${noteId})" 
+                        class="text-xs text-purple-600 hover:text-purple-800 font-semibold">
+                    + Add Comment
+                </button>
+            </div>
+            <div id="add-note-comment-form-${noteId}"></div>
+            <div class="space-y-2">
+                ${safeComments.length > 0 ? safeComments.map(comment => renderNoteComment(comment, noteId, 0)).join('') : '<p class="text-xs text-gray-500 italic">No comments yet.</p>'}
+            </div>
+        </div>
+    `;
+    
+    // Load reactions for all comments after rendering
+    if (safeComments.length > 0) {
+        setTimeout(() => {
+            loadNoteCommentReactionsRecursive(safeComments);
+        }, 0);
+    }
+}
+
+// Render a single note comment and its replies
+function renderNoteComment(comment, noteId, depth = 0) {
+    const indent = depth > 0 ? 'ml-6 border-l-2 border-purple-200 pl-3' : '';
+    const canEdit = currentUserId && comment.user_id === currentUserId;
+    // Store unescaped content in data attribute for editing
+    const contentForEdit = comment.content.replace(/"/g, '&quot;');
+    
+    return `
+        <div class="bg-gray-50 rounded p-2 ${indent}">
+            <div class="flex items-start gap-2">
+                ${getProfilePictureHTML(comment, 'w-6 h-6')}
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-baseline justify-between">
+                        <span class="font-medium text-xs text-gray-700">${comment.first_name && comment.last_name ? escapeHtml(`${comment.first_name} ${comment.last_name}`) : escapeHtml(comment.username)}</span>
+                        <span class="text-xs text-gray-500">${formatDate(comment.created_at)}</span>
+                    </div>
+                    <p class="text-gray-800 text-xs mt-1">${escapeHtml(comment.content)}</p>
+                    <div class="flex gap-3 mt-1">
+                        <a class="text-xs text-purple-600 hover:text-purple-800 cursor-pointer" onclick="showReplyToNoteCommentForm(${comment.id}, ${noteId})">Reply</a>
+                        ${canEdit ? `
+                            <a class="text-xs text-blue-600 hover:text-blue-800 cursor-pointer" onclick="editNoteComment(${comment.id}, ${noteId}, \`${contentForEdit}\`)">Edit</a>
+                            <a class="text-xs text-red-600 hover:text-red-800 cursor-pointer" onclick="deleteNoteComment(${comment.id}, ${noteId})">Delete</a>
+                        ` : ''}
+                    </div>
+                    <div id="reply-note-comment-form-${comment.id}"></div>
+                    <div id="reactions-note_comment-${comment.id}" class="flex flex-wrap gap-1 items-center mt-2">
+                        <span class="text-xs text-gray-400">Loading reactions...</span>
+                    </div>
+                </div>
+            </div>
+            ${comment.replies && comment.replies.length > 0 ? '<div class="mt-2 space-y-2">' + comment.replies.map(reply => renderNoteComment(reply, noteId, depth + 1)).join('') + '</div>' : ''}
+        </div>
+    `;
+}
+
+// Count total note comments including replies
+function countNoteComments(comments) {
+    if (!comments || !Array.isArray(comments)) {
+        return 0;
+    }
+    return comments.reduce((total, comment) => {
+        return total + 1 + (comment.replies ? countNoteComments(comment.replies) : 0);
+    }, 0);
+}
+
+// Load reactions recursively for note comments and their replies
+function loadNoteCommentReactionsRecursive(comments) {
+    if (!comments || !Array.isArray(comments)) return;
+    
+    comments.forEach(comment => {
+        loadReactions('note_comment', comment.id);
+        if (comment.replies && comment.replies.length > 0) {
+            loadNoteCommentReactionsRecursive(comment.replies);
+        }
+    });
+}
+
+// Show form to add a comment to a note
+window.showAddNoteCommentForm = function(noteId) {
+    const formContainer = document.getElementById(`add-note-comment-form-${noteId}`);
+    if (!formContainer) return;
+    
+    formContainer.innerHTML = `
+        <div class="bg-white rounded p-2 border border-purple-300">
+            <textarea id="new-note-comment-${noteId}" rows="2" placeholder="Add a comment..." 
+                      class="w-full text-xs border border-gray-300 rounded p-2"></textarea>
+            <div class="flex gap-2 mt-2">
+                <button onclick="submitNoteComment(${noteId})" 
+                        class="text-xs px-3 py-1 bg-purple-600 text-white rounded hover:bg-purple-700">Post</button>
+                <button onclick="cancelNoteCommentForm(${noteId})" 
+                        class="text-xs px-3 py-1 bg-gray-300 text-gray-700 rounded hover:bg-gray-400">Cancel</button>
+            </div>
+        </div>
+    `;
+    document.getElementById(`new-note-comment-${noteId}`).focus();
+};
+
+// Show form to reply to a comment
+window.showReplyToNoteCommentForm = function(parentId, noteId) {
+    const formContainer = document.getElementById(`reply-note-comment-form-${parentId}`);
+    if (!formContainer) return;
+    
+    formContainer.innerHTML = `
+        <div class="bg-white rounded p-2 border border-purple-300 mt-2">
+            <textarea id="reply-note-comment-${parentId}" rows="2" placeholder="Write a reply..." 
+                      class="w-full text-xs border border-gray-300 rounded p-2"></textarea>
+            <div class="flex gap-2 mt-2">
+                <button onclick="submitNoteCommentReply(${parentId}, ${noteId})" 
+                        class="text-xs px-3 py-1 bg-purple-600 text-white rounded hover:bg-purple-700">Reply</button>
+                <button onclick="cancelReplyNoteCommentForm(${parentId})" 
+                        class="text-xs px-3 py-1 bg-gray-300 text-gray-700 rounded hover:bg-gray-400">Cancel</button>
+            </div>
+        </div>
+    `;
+    document.getElementById(`reply-note-comment-${parentId}`).focus();
+};
+
+// Submit a new note comment
+window.submitNoteComment = async function(noteId) {
+    const textarea = document.getElementById(`new-note-comment-${noteId}`);
+    const content = textarea.value.trim();
+    
+    if (!content) return;
+    
+    try {
+        const response = await fetch('/api/comments/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                noteId: noteId,
+                content: content
+            })
+        });
+        
+        if (!response.ok) throw new Error('Failed to create comment');
+        
+        // Reload comments to show the new one
+        await loadNoteCommentsInline(noteId);
+    } catch (error) {
+        console.error('Error creating comment:', error);
+        showNoteMessage('Error', 'Failed to create comment');
+    }
+};
+
+// Submit a reply to a note comment
+window.submitNoteCommentReply = async function(parentId, noteId) {
+    const textarea = document.getElementById(`reply-note-comment-${parentId}`);
+    const content = textarea.value.trim();
+    
+    if (!content) return;
+    
+    try {
+        const response = await fetch('/api/comments/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                noteId: noteId,
+                parentId: parentId,
+                content: content
+            })
+        });
+        
+        if (!response.ok) throw new Error('Failed to create reply');
+        
+        // Reload comments to show the new reply
+        await loadNoteCommentsInline(noteId);
+    } catch (error) {
+        console.error('Error creating reply:', error);
+        showNoteMessage('Error', 'Failed to create reply');
+    }
+};
+
+// Cancel adding a comment
+window.cancelNoteCommentForm = function(noteId) {
+    const formContainer = document.getElementById(`add-note-comment-form-${noteId}`);
+    if (formContainer) formContainer.innerHTML = '';
+};
+
+// Cancel replying to a comment
+window.cancelReplyNoteCommentForm = function(parentId) {
+    const formContainer = document.getElementById(`reply-note-comment-form-${parentId}`);
+    if (formContainer) formContainer.innerHTML = '';
+};
+
+// Edit a note comment
+window.editNoteComment = async function(commentId, noteId, currentContent) {
+    showNoteEditor('Edit Comment', currentContent, async (newContent) => {
+        if (!newContent || newContent === currentContent) return;
+        
+        try {
+            const response = await fetch(`/api/comments/${commentId}/update`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: newContent })
+            });
+            
+            if (!response.ok) throw new Error('Failed to update comment');
+            
+            await loadNoteCommentsInline(noteId);
+        } catch (error) {
+            console.error('Error updating comment:', error);
+            showNoteMessage('Error', 'Failed to update comment');
+        }
+    });
+};
+
+// Delete a note comment
+window.deleteNoteComment = async function(commentId, noteId) {
+    showDeleteConfirm(async () => {
+        try {
+            const response = await fetch(`/api/comments/delete?commentId=${commentId}`, {
+                method: 'DELETE'
+            });
+            
+            if (!response.ok) throw new Error('Failed to delete comment');
+            
+            await loadNoteCommentsInline(noteId);
+        } catch (error) {
+            console.error('Error deleting comment:', error);
+            showNoteMessage('Error', 'Failed to delete comment');
+        }
+    });
+};
 
 // Utility function for HTML escaping
 function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// Reactions functionality
+const COMMON_EMOJIS = ['👍', '❤️', '🙏', '😊', '🎉', '👏'];
+
+// Load and display reactions for a target
+async function loadReactions(targetType, targetId) {
+    const container = document.getElementById(`reactions-${targetType}-${targetId}`);
+    if (!container) return;
+
+    try {
+        const response = await fetch(`/api/reactions/summary?target_type=${targetType}&target_id=${targetId}`);
+        if (!response.ok) throw new Error('Failed to load reactions');
+        
+        const reactions = await response.json() || [];
+        renderReactions(targetType, targetId, reactions);
+    } catch (error) {
+        console.error('Error loading reactions:', error);
+        container.innerHTML = '';
+    }
+}
+
+// Render reactions display
+function renderReactions(targetType, targetId, reactions) {
+    const container = document.getElementById(`reactions-${targetType}-${targetId}`);
+    if (!container) return;
+
+    let html = '';
+    
+    // Display existing reactions
+    if (reactions && reactions.length > 0) {
+        reactions.forEach(r => {
+            const buttonClass = r.has_reacted 
+                ? 'bg-blue-100 border-blue-400 text-blue-800' 
+                : 'bg-gray-100 border-gray-300 text-gray-700 hover:bg-gray-200';
+            
+            html += `
+                <button onclick="toggleReaction('${targetType}', ${targetId}, '${r.emoji}')" 
+                        class="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs border transition ${buttonClass}"
+                        title="${r.count} ${r.count === 1 ? 'person' : 'people'}">
+                    <span>${r.emoji}</span>
+                    <span class="font-medium">${r.count}</span>
+                </button>
+            `;
+        });
+    }
+    
+    // Add reaction button
+    html += `
+        <button onclick="showReactionPicker('${targetType}', ${targetId}, event)" 
+                class="inline-flex items-center px-2 py-1 rounded-full text-xs border border-gray-300 bg-white hover:bg-gray-100 transition"
+                title="Add reaction">
+            <span>😊➕</span>
+        </button>
+    `;
+    
+    container.innerHTML = html;
+}
+
+// Toggle a reaction
+async function toggleReaction(targetType, targetId, emoji) {
+    try {
+        const response = await fetch('/api/reactions/toggle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                target_type: targetType,
+                target_id: targetId,
+                emoji: emoji
+            })
+        });
+
+        if (!response.ok) throw new Error('Failed to toggle reaction');
+        
+        const reactions = await response.json();
+        renderReactions(targetType, targetId, reactions);
+    } catch (error) {
+        console.error('Error toggling reaction:', error);
+    }
+}
+
+// Show reaction picker
+function showReactionPicker(targetType, targetId, event) {
+    event.stopPropagation();
+    
+    // Remove any existing picker
+    const existingPicker = document.querySelector('.reaction-picker');
+    if (existingPicker) existingPicker.remove();
+    
+    // Create picker
+    const picker = document.createElement('div');
+    picker.className = 'reaction-picker absolute z-50 bg-white rounded-lg shadow-xl p-2 flex gap-1 border border-gray-200';
+    picker.style.cssText = 'margin-top: -40px;';
+    
+    COMMON_EMOJIS.forEach(emoji => {
+        const btn = document.createElement('button');
+        btn.textContent = emoji;
+        btn.className = 'text-2xl hover:scale-125 transition p-1 rounded hover:bg-gray-100';
+        btn.onclick = async () => {
+            await toggleReaction(targetType, targetId, emoji);
+            picker.remove();
+        };
+        picker.appendChild(btn);
+    });
+    
+    // Position and show picker
+    const button = event.target.closest('button');
+    button.parentElement.style.position = 'relative';
+    button.parentElement.appendChild(picker);
+    
+    // Close picker on outside click
+    setTimeout(() => {
+        document.addEventListener('click', function closePicker(e) {
+            if (!picker.contains(e.target)) {
+                picker.remove();
+                document.removeEventListener('click', closePicker);
+            }
+        });
+    }, 0);
+}
+
+// ============ VERSE COMMENTS FUNCTIONALITY ============
+
+// Load user groups for verse comments dropdown
+async function loadUserGroupsForComments() {
+    try {
+        const response = await fetch('/api/user/groups');
+        if (!response.ok) return;
+        
+        const groups = await response.json();
+        userGroups = groups || [];
+        
+        // Populate the group selector
+        if (verseCommentsGroupSelect) {
+            verseCommentsGroupSelect.innerHTML = '<option value="">Personal Notes</option>';
+            userGroups.forEach(group => {
+                const option = document.createElement('option');
+                option.value = group.id;
+                option.textContent = group.name;
+                verseCommentsGroupSelect.appendChild(option);
+            });
+            
+            // Show verse comments controls if user is authenticated
+            if (userGroups.length >= 0) {
+                toggleVerseCommentsBtn.classList.remove('hidden');
+                verseCommentsGroupSelect.classList.remove('hidden');
+            }
+        }
+    } catch (error) {
+        console.error('Failed to load groups for comments:', error);
+    }
+}
+
+// Load comments for a specific verse
+async function loadVerseComments(book, chapter, verse) {
+    if (!currentUserId) return [];
+    
+    try {
+        const params = new URLSearchParams({
+            book,
+            chapter,
+            verse
+        });
+        
+        if (selectedCommentGroup) {
+            params.append('group_id', selectedCommentGroup);
+        }
+        
+        const response = await fetch(`/api/verse-comments/list?${params}`);
+        if (!response.ok) return [];
+        
+        const comments = await response.json();
+        return comments || [];
+    } catch (error) {
+        console.error('Failed to load verse comments:', error);
+        return [];
+    }
+}
+
+// Render a single comment and its replies
+function renderComment(comment, depth = 0) {
+    const indent = depth > 0 ? 'verse-comment-reply' : '';
+    return `
+        <div class="verse-comment ${indent}">
+            <div class="flex items-start gap-2">
+                ${getProfilePictureHTML(comment, 'w-6 h-6')}
+                <div class="flex-1 min-w-0">
+                    <div class="verse-comment-header">
+                        <strong>${escapeHtml(comment.first_name)} ${escapeHtml(comment.last_name)}</strong>
+                        <span class="text-gray-500">·</span>
+                        <span class="text-gray-500">${formatDate(comment.created_at)}</span>
+                    </div>
+                    <div class="verse-comment-content">${escapeHtml(comment.content)}</div>
+                    <div class="verse-comment-actions">
+                        <a class="verse-comment-action" onclick="showReplyForm(${comment.id}, '${escapeHtml(currentBook)}', ${currentChapter}, ${comment.verse})">Reply</a>
+                        ${comment.user_id === currentUserId ? `
+                            <a class="verse-comment-action" onclick="editVerseComment(${comment.id}, ${JSON.stringify(escapeHtml(comment.content)).replace(/"/g, '&quot;')})">Edit</a>
+                            <a class="verse-comment-action text-red-600" onclick="deleteVerseComment(${comment.id})">Delete</a>
+                        ` : ''}
+                    </div>
+                    <div id="reactions-verse_comment-${comment.id}" class="flex flex-wrap gap-1 items-center mt-2">
+                        <span class="text-xs text-gray-400">Loading reactions...</span>
+                    </div>
+                    <div id="reply-form-${comment.id}"></div>
+                </div>
+            </div>
+            ${comment.replies && comment.replies.length > 0 ? comment.replies.map(reply => renderComment(reply, depth + 1)).join('') : ''}
+        </div>
+    `;
+}
+
+// Render verse comments section
+function renderVerseCommentsSection(book, chapter, verse, comments) {
+    const commentCount = countTotalComments(comments);
+    
+    let contentHTML = '';
+    
+    // If no comments, show empty state
+    if (commentCount === 0) {
+        contentHTML = '<div id="add-comment-form-' + verse + '"></div>';
+    } else {
+        // If comments exist, show full section
+        contentHTML = `
+            <div class="verse-comments">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                    <strong style="color: #7c3aed;">${commentCount} ${commentCount === 1 ? 'Note' : 'Notes'}</strong>
+                    <button onclick="showAddCommentForm('${escapeHtml(book)}', ${chapter}, ${verse})" 
+                            style="padding: 0.25rem 0.5rem; background-color: #9333ea; color: white; border-radius: 0.25rem; font-size: 0.75rem; cursor: pointer; border: none;">
+                        + Add Note
+                    </button>
+                </div>
+                <div id="add-comment-form-${verse}"></div>
+                ${comments.map(comment => renderComment(comment, 0)).join('')}
+            </div>
+        `;
+        
+        // Load reactions for all verse comments after rendering
+        setTimeout(() => {
+            loadVerseCommentReactionsRecursive(comments);
+        }, 0);
+    }
+    
+    return `<div id="verse-comments-section-${verse}">${contentHTML}</div>`;
+}
+
+// Count total comments including replies
+function countTotalComments(comments) {
+    if (!comments || !Array.isArray(comments)) {
+        return 0;
+    }
+    return comments.reduce((total, comment) => {
+        return total + 1 + (comment.replies ? countTotalComments(comment.replies) : 0);
+    }, 0);
+}
+
+// Load reactions recursively for verse comments and their replies
+function loadVerseCommentReactionsRecursive(comments) {
+    if (!comments || !Array.isArray(comments)) return;
+    
+    comments.forEach(comment => {
+        loadReactions('verse_comment', comment.id);
+        if (comment.replies && comment.replies.length > 0) {
+            loadVerseCommentReactionsRecursive(comment.replies);
+        }
+    });
+}
+
+// Show form to add a new comment
+window.showAddCommentForm = function(book, chapter, verse) {
+    const formContainer = document.getElementById(`add-comment-form-${verse}`);
+    if (!formContainer) return;
+    
+    formContainer.innerHTML = `
+        <div class="verse-comment-form">
+            <textarea id="new-comment-${verse}" rows="3" placeholder="Add your note..."></textarea>
+            <div style="display: flex; gap: 0.5rem;">
+                <button onclick="submitVerseComment('${book}', ${chapter}, ${verse})">Post</button>
+                <button onclick="cancelCommentForm(${verse})" style="background-color: #6b7280;">Cancel</button>
+            </div>
+        </div>
+    `;
+    document.getElementById(`new-comment-${verse}`).focus();
+};
+
+// Show form to reply to a comment
+window.showReplyForm = function(parentId, book, chapter, verse) {
+    const formContainer = document.getElementById(`reply-form-${parentId}`);
+    if (!formContainer) return;
+    
+    formContainer.innerHTML = `
+        <div class="verse-comment-form" style="margin-top: 0.5rem;">
+            <textarea id="reply-${parentId}" rows="2" placeholder="Write a reply..."></textarea>
+            <div style="display: flex; gap: 0.5rem;">
+                <button onclick="submitReply(${parentId}, '${book}', ${chapter}, ${verse})">Reply</button>
+                <button onclick="cancelReplyForm(${parentId})" style="background-color: #6b7280;">Cancel</button>
+            </div>
+        </div>
+    `;
+    document.getElementById(`reply-${parentId}`).focus();
+};
+
+// Submit a new verse comment
+window.submitVerseComment = async function(book, chapter, verse) {
+    const textarea = document.getElementById(`new-comment-${verse}`);
+    if (!textarea) return;
+    
+    const content = textarea.value.trim();
+    if (!content) return;
+    
+    try {
+        const response = await fetch('/api/verse-comments/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                book,
+                chapter,
+                verse,
+                content,
+                group_id: selectedCommentGroup || null
+            })
+        });
+        
+        if (response.ok) {
+            await reloadVerseComments(book, chapter, verse); // Reload just this verse's comments
+        } else {
+            showNoteMessage('Error', 'Failed to add note');
+        }
+    } catch (error) {
+        console.error('Failed to submit comment:', error);
+        showNoteMessage('Error', 'Failed to add note');
+    }
+};
+
+// Submit a reply to a comment
+window.submitReply = async function(parentId, book, chapter, verse) {
+    const textarea = document.getElementById(`reply-${parentId}`);
+    if (!textarea) return;
+    
+    const content = textarea.value.trim();
+    if (!content) return;
+    
+    try {
+        const response = await fetch('/api/verse-comments/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                book,
+                chapter,
+                verse,
+                content,
+                parent_id: parentId,
+                group_id: selectedCommentGroup || null
+            })
+        });
+        
+        if (response.ok) {
+            await reloadVerseComments(book, chapter, verse); // Reload just this verse's comments
+        } else {
+            showNoteMessage('Error', 'Failed to add reply');
+        }
+    } catch (error) {
+        console.error('Failed to submit reply:', error);
+        showNoteMessage('Error', 'Failed to add reply');
+    }
+};
+
+// Cancel comment form
+window.cancelCommentForm = function(verse) {
+    const formContainer = document.getElementById(`add-comment-form-${verse}`);
+    if (formContainer) formContainer.innerHTML = '';
+};
+
+// Cancel reply form
+window.cancelReplyForm = function(parentId) {
+    const formContainer = document.getElementById(`reply-form-${parentId}`);
+    if (formContainer) formContainer.innerHTML = '';
+};
+
+// Delete a verse comment
+window.deleteVerseComment = async function(commentId) {
+    showDeleteConfirm(async () => {
+        try {
+            const response = await fetch(`/api/verse-comments/${commentId}/delete`, {
+                method: 'DELETE'
+            });
+            
+            if (response.ok) {
+                // Reload just the verse comments for the current view
+                await reloadAllVisibleVerseComments();
+            } else {
+                showNoteMessage('Error', 'Failed to delete note');
+            }
+        } catch (error) {
+            console.error('Failed to delete comment:', error);
+            showNoteMessage('Error', 'Failed to delete note');
+        }
+    });
+};
+
+// Edit a verse comment
+window.editVerseComment = function(commentId, currentContent) {
+    showNoteEditor('Edit Note', currentContent, async (newContent) => {
+        try {
+            const response = await fetch(`/api/verse-comments/${commentId}/update`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: newContent })
+            });
+            
+            if (response.ok) {
+                // Reload just the verse comments for the current view
+                await reloadAllVisibleVerseComments();
+            } else {
+                showNoteMessage('Error', 'Failed to update note');
+            }
+        } catch (error) {
+            console.error('Failed to edit comment:', error);
+            showNoteMessage('Error', 'Failed to update note');
+        }
+    });
+};
+
+// Reload verse comments for a specific verse
+async function reloadVerseComments(book, chapter, verse) {
+    const section = document.getElementById(`verse-comments-section-${verse}`);
+    if (!section) return;
+    
+    try {
+        const comments = await loadVerseComments(book, chapter, verse);
+        const commentCount = countTotalComments(comments);
+        
+        let contentHTML = '';
+        
+        // If no comments, show empty state
+        if (commentCount === 0) {
+            contentHTML = '<div id="add-comment-form-' + verse + '"></div>';
+        } else {
+            // If comments exist, show full section
+            contentHTML = `
+                <div class="verse-comments">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                        <strong style="color: #7c3aed;">${commentCount} ${commentCount === 1 ? 'Note' : 'Notes'}</strong>
+                        <button onclick="showAddCommentForm('${escapeHtml(book)}', ${chapter}, ${verse})" 
+                                style="padding: 0.25rem 0.5rem; background-color: #9333ea; color: white; border-radius: 0.25rem; font-size: 0.75rem; cursor: pointer; border: none;">
+                            + Add Note
+                        </button>
+                    </div>
+                    <div id="add-comment-form-${verse}"></div>
+                    ${comments.map(comment => renderComment(comment, 0)).join('')}
+                </div>
+            `;
+        }
+        
+        // Update the section's innerHTML
+        section.innerHTML = contentHTML;
+        
+        // Load reactions after DOM is updated
+        if (comments.length > 0) {
+            setTimeout(() => {
+                loadVerseCommentReactionsRecursive(comments);
+            }, 0);
+        }
+    } catch (error) {
+        console.error('Failed to reload verse comments:', error);
+    }
+}
+
+// Reload all visible verse comments in the current chapter
+async function reloadAllVisibleVerseComments() {
+    if (!showVerseComments || !currentBook || !currentChapter) return;
+    
+    const verseDivs = document.querySelectorAll('[data-verse]');
+    for (const verseDiv of verseDivs) {
+        const verse = parseInt(verseDiv.getAttribute('data-verse'));
+        if (verse) {
+            await reloadVerseComments(currentBook, currentChapter, verse);
+        }
+    }
+}
+
+// Format date for comments
+function formatDate(dateString) {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+    
+    if (diffMins < 1) return 'just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString();
+}
+
+// WebSocket connection for real-time updates
+let ws = null;
+let wsReconnectTimeout = null;
+
+function connectWebSocket() {
+    // Only connect if user is authenticated
+    if (!currentUserId) return;
+    
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    
+    try {
+        ws = new WebSocket(wsUrl);
+        
+        ws.onopen = function() {
+            console.log('WebSocket connected');
+            
+            // Clear any reconnection timeout
+            if (wsReconnectTimeout) {
+                clearTimeout(wsReconnectTimeout);
+                wsReconnectTimeout = null;
+            }
+        };
+        
+        ws.onmessage = function(event) {
+            try {
+                const message = JSON.parse(event.data);
+                handleWebSocketMessage(message);
+            } catch (error) {
+                console.error('Failed to parse WebSocket message:', error);
+            }
+        };
+        
+        ws.onerror = function(error) {
+            console.error('WebSocket error:', error);
+        };
+        
+        ws.onclose = function() {
+            console.log('WebSocket disconnected');
+            ws = null;
+            
+            // Reconnect after 3 seconds if user is still authenticated
+            if (currentUserId && !wsReconnectTimeout) {
+                wsReconnectTimeout = setTimeout(connectWebSocket, 3000);
+            }
+        };
+    } catch (error) {
+        console.error('Failed to create WebSocket:', error);
+    }
+}
+
+function handleWebSocketMessage(message) {
+    const { type, action, book, chapter, verse, note_id, data } = message;
+    
+    // Handle verse comments
+    if (type === 'verse_comment') {
+        if (showVerseComments && currentBook === book && currentChapter === chapter && verse) {
+            // Reload just the affected verse's comments
+            reloadVerseComments(book, chapter, verse);
+        }
+    }
+    
+    // Handle note comments
+    if (type === 'note_comment' && note_id) {
+        const section = document.getElementById(`comments-section-${note_id}`);
+        if (section) {
+            // Reload note comments if visible
+            loadNoteCommentsInline(note_id);
+        }
+    }
+    
+    // Handle reactions
+    if (type === 'reaction' && data) {
+        const { target_type, target_id } = data;
+        if (target_type && target_id) {
+            // Reload reactions for this target
+            loadReactions(target_type, target_id);
+        }
+    }
 }
 
 // Start the application

@@ -10,6 +10,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -132,36 +134,37 @@ func (h *AuthHandler) getCurrentUser(r *http.Request) (*User, error) {
 // handleRegister handles user registration
 func (h *AuthHandler) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Redirect(w, r, "/register?error="+url.QueryEscape("Method not allowed"), http.StatusSeeOther)
 		return
 	}
 
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "Invalid form data", http.StatusBadRequest)
+		http.Redirect(w, r, "/register?error="+url.QueryEscape("Invalid form data"), http.StatusSeeOther)
 		return
 	}
 
 	email := r.FormValue("email")
-	username := r.FormValue("username")
+	firstName := r.FormValue("first_name")
+	lastName := r.FormValue("last_name")
 	password := r.FormValue("password")
 
-	if email == "" || username == "" || password == "" {
-		http.Error(w, "All fields are required", http.StatusBadRequest)
+	if email == "" || firstName == "" || lastName == "" || password == "" {
+		http.Redirect(w, r, "/register?error="+url.QueryEscape("All fields are required"), http.StatusSeeOther)
 		return
 	}
 
 	// Create user
-	user, err := h.db.CreateUser(email, username, password)
+	user, err := h.db.CreateUser(email, firstName, lastName, password)
 	if err != nil {
 		log.Printf("Failed to create user: %v", err)
-		http.Error(w, "Failed to create user. Email or username may already exist.", http.StatusBadRequest)
+		http.Redirect(w, r, "/register?error="+url.QueryEscape("Failed to create user. Email or username may already exist."), http.StatusSeeOther)
 		return
 	}
 
 	// Create session
 	if err := h.createSession(w, user.ID); err != nil {
 		log.Printf("Failed to create session: %v", err)
-		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		http.Redirect(w, r, "/register?error="+url.QueryEscape("Failed to create session"), http.StatusSeeOther)
 		return
 	}
 
@@ -171,12 +174,12 @@ func (h *AuthHandler) handleRegister(w http.ResponseWriter, r *http.Request) {
 // handleLogin handles user login
 func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Redirect(w, r, "/login?error="+url.QueryEscape("Method not allowed"), http.StatusSeeOther)
 		return
 	}
 
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "Invalid form data", http.StatusBadRequest)
+		http.Redirect(w, r, "/login?error="+url.QueryEscape("Invalid form data"), http.StatusSeeOther)
 		return
 	}
 
@@ -184,7 +187,7 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	password := r.FormValue("password")
 
 	if identifier == "" || password == "" {
-		http.Error(w, "All fields are required", http.StatusBadRequest)
+		http.Redirect(w, r, "/login?error="+url.QueryEscape("All fields are required"), http.StatusSeeOther)
 		return
 	}
 
@@ -198,20 +201,20 @@ func (h *AuthHandler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		http.Redirect(w, r, "/login?error="+url.QueryEscape("Invalid credentials"), http.StatusSeeOther)
 		return
 	}
 
 	// Verify password
 	if !h.db.VerifyPassword(user, password) {
-		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		http.Redirect(w, r, "/login?error="+url.QueryEscape("Invalid credentials"), http.StatusSeeOther)
 		return
 	}
 
 	// Create session
 	if err := h.createSession(w, user.ID); err != nil {
 		log.Printf("Failed to create session: %v", err)
-		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		http.Redirect(w, r, "/login?error="+url.QueryEscape("Failed to create session"), http.StatusSeeOther)
 		return
 	}
 
@@ -307,11 +310,14 @@ func (h *AuthHandler) handleGoogleCallback(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Split name into first and last
+	firstName, lastName := splitName(userInfo.Name)
+
 	// Get or create user
 	user, err := h.db.GetUserByOAuth("google", userInfo.ID)
 	if err == sql.ErrNoRows {
 		// Create new user
-		user, err = h.db.CreateOAuthUser(userInfo.Email, userInfo.Name, "google", userInfo.ID)
+		user, err = h.db.CreateOAuthUser(userInfo.Email, firstName, lastName, "google", userInfo.ID)
 		if err != nil {
 			log.Printf("Failed to create OAuth user: %v", err)
 			http.Error(w, "Failed to create user", http.StatusInternalServerError)
@@ -390,6 +396,7 @@ func (h *AuthHandler) handleGitHubCallback(w http.ResponseWriter, r *http.Reques
 	var userInfo struct {
 		ID    int64  `json:"id"`
 		Login string `json:"login"`
+		Name  string `json:"name"`
 		Email string `json:"email"`
 	}
 
@@ -437,12 +444,18 @@ func (h *AuthHandler) handleGitHubCallback(w http.ResponseWriter, r *http.Reques
 		userInfo.Email = fmt.Sprintf("%s@github.user", userInfo.Login)
 	}
 
+	// Split name into first and last (if name is available, otherwise use login)
+	firstName, lastName := splitName(userInfo.Name)
+	if firstName == "" {
+		firstName = userInfo.Login
+	}
+
 	// Get or create user
 	oauthID := fmt.Sprintf("%d", userInfo.ID)
 	user, err := h.db.GetUserByOAuth("github", oauthID)
 	if err == sql.ErrNoRows {
 		// Create new user
-		user, err = h.db.CreateOAuthUser(userInfo.Email, userInfo.Login, "github", oauthID)
+		user, err = h.db.CreateOAuthUser(userInfo.Email, firstName, lastName, "github", oauthID)
 		if err != nil {
 			log.Printf("Failed to create OAuth user: %v", err)
 			http.Error(w, "Failed to create user", http.StatusInternalServerError)
@@ -513,11 +526,16 @@ func (h *AuthHandler) handleGetUserInfo(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]interface{}{
-		"authenticated": true,
-		"id":            user.ID,
-		"username":      user.Username,
-		"email":         user.Email,
-		"provider":      user.OAuthProvider,
+		"authenticated":       true,
+		"id":                  user.ID,
+		"username":            user.Username,
+		"email":               user.Email,
+		"provider":            user.OAuthProvider,
+		"first_name":          user.FirstName,
+		"last_name":           user.LastName,
+		"profile_picture_url": user.ProfilePictureURL,
+		"location_city":       user.LocationCity,
+		"location_state":      user.LocationState,
 	}); err != nil {
 		log.Printf("Error encoding JSON response: %v", err)
 	}
@@ -608,4 +626,25 @@ func (h *AuthHandler) handleGetReadingPosition(w http.ResponseWriter, r *http.Re
 	}); err != nil {
 		log.Printf("Error encoding JSON response: %v", err)
 	}
+}
+
+// splitName splits a full name into first and last name
+func splitName(fullName string) (string, string) {
+	fullName = strings.TrimSpace(fullName)
+	if fullName == "" {
+		return "", ""
+	}
+
+	parts := strings.Fields(fullName)
+	if len(parts) == 0 {
+		return "", ""
+	}
+	if len(parts) == 1 {
+		return parts[0], ""
+	}
+
+	// First part is first name, rest is last name
+	firstName := parts[0]
+	lastName := strings.Join(parts[1:], " ")
+	return firstName, lastName
 }

@@ -32,11 +32,14 @@ type StudyPlan struct {
 
 // GroupMember represents a group membership
 type GroupMember struct {
-	GroupID  int64     `json:"group_id"`
-	UserID   int64     `json:"user_id"`
-	Role     string    `json:"role"` // "admin" or "member"
-	JoinedAt time.Time `json:"joined_at"`
-	Username string    `json:"username"` // Added for display
+	GroupID           int64     `json:"group_id"`
+	UserID            int64     `json:"user_id"`
+	Role              string    `json:"role"` // "admin" or "member"
+	JoinedAt          time.Time `json:"joined_at"`
+	Username          string    `json:"username"`            // Kept for backwards compatibility
+	FirstName         string    `json:"first_name"`          // For display
+	LastName          string    `json:"last_name"`           // For display
+	ProfilePictureURL string    `json:"profile_picture_url"` // For display
 }
 
 // GroupInvite represents a pending group invitation
@@ -48,8 +51,10 @@ type GroupInvite struct {
 	Token             string    `json:"token"`
 	ExpiresAt         time.Time `json:"expires_at"`
 	CreatedAt         time.Time `json:"created_at"`
-	GroupName         string    `json:"group_name"`          // Added for display
-	InvitedByUsername string    `json:"invited_by_username"` // Added for display
+	GroupName         string    `json:"group_name"`            // Added for display
+	InvitedByUsername string    `json:"invited_by_username"`   // Kept for backwards compatibility
+	InvitedByFirst    string    `json:"invited_by_first_name"` // For display
+	InvitedByLast     string    `json:"invited_by_last_name"`  // For display
 }
 
 // CreateStudyGroup creates a new study group
@@ -125,7 +130,7 @@ func (d *Database) GetUserGroups(userID int64) ([]*StudyGroup, error) {
 // GetGroupMembers retrieves all members of a group
 func (d *Database) GetGroupMembers(groupID int64) ([]*GroupMember, error) {
 	rows, err := d.db.Query(
-		`SELECT u.username, gm.role, gm.joined_at
+		`SELECT gm.user_id, u.username, u.first_name, u.last_name, u.profile_picture_url, gm.role, gm.joined_at
 		 FROM users u
 		 INNER JOIN group_members gm ON u.id = gm.user_id
 		 WHERE gm.group_id = ?
@@ -145,7 +150,7 @@ func (d *Database) GetGroupMembers(groupID int64) ([]*GroupMember, error) {
 
 	for rows.Next() {
 		member := &GroupMember{GroupID: groupID}
-		if err := rows.Scan(&member.Username, &member.Role, &member.JoinedAt); err != nil {
+		if err := rows.Scan(&member.UserID, &member.Username, &member.FirstName, &member.LastName, &member.ProfilePictureURL, &member.Role, &member.JoinedAt); err != nil {
 			return nil, err
 		}
 		members = append(members, member)
@@ -281,7 +286,7 @@ func (d *Database) DeclineGroupInvite(inviteID int64) error {
 func (d *Database) GetPendingInvites(email string) ([]*GroupInvite, error) {
 	rows, err := d.db.Query(
 		`SELECT gi.id, gi.group_id, gi.invited_by, gi.email, gi.token, gi.expires_at, gi.created_at,
-		        g.name as group_name, u.username as invited_by_username
+		        g.name as group_name, u.username as invited_by_username, u.first_name, u.last_name
 		 FROM group_invites gi
 		 INNER JOIN study_groups g ON gi.group_id = g.id
 		 INNER JOIN users u ON gi.invited_by = u.id
@@ -303,7 +308,7 @@ func (d *Database) GetPendingInvites(email string) ([]*GroupInvite, error) {
 		invite := &GroupInvite{}
 		if err := rows.Scan(&invite.ID, &invite.GroupID, &invite.InvitedBy, &invite.Email,
 			&invite.Token, &invite.ExpiresAt, &invite.CreatedAt,
-			&invite.GroupName, &invite.InvitedByUsername); err != nil {
+			&invite.GroupName, &invite.InvitedByUsername, &invite.InvitedByFirst, &invite.InvitedByLast); err != nil {
 			return nil, err
 		}
 		invites = append(invites, invite)

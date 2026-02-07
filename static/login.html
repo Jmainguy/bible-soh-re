@@ -31,6 +31,11 @@
             <p class="text-gray-600">Sign in to continue reading</p>
         </div>
 
+        <!-- Error Message -->
+        <div id="errorMessage" class="hidden mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+            <p class="text-sm text-red-800" id="errorText"></p>
+        </div>
+
         <!-- Local Login Form -->
         <form method="POST" action="/auth/login" class="space-y-4">
             <div>
@@ -122,5 +127,22 @@
             </a>
         </div>
     </div>
+
+    <script>
+        // Check for error parameter in URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const error = urlParams.get('error');
+        if (error) {
+            const errorMessage = document.getElementById('errorMessage');
+            const errorText = document.getElementById('errorText');
+            errorText.textContent = decodeURIComponent(error);
+            errorMessage.classList.remove('hidden');
+            
+            // Remove error from URL without reloading
+            const url = new URL(window.location);
+            url.searchParams.delete('error');
+            window.history.replaceState({}, '', url);
+        }
+    </script>
 </body>
 </html>

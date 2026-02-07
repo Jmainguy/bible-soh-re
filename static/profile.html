@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Profile - Bible Reader</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,600;0,700;1,400&family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #f5f1e8;
+            font-family: 'EB Garamond', 'Crimson Text', Georgia, serif;
+        }
+        .bible-page {
+            background-color: #fffef9;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1), inset 0 0 100px rgba(139,69,19,0.02);
+        }
+        .page-title {
+            font-family: 'EB Garamond', Georgia, serif;
+            color: #5d4e37;
+            letter-spacing: 0.025em;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #8b4513 0%, #654321 100%);
+            color: #fffef9;
+            transition: all 0.2s;
+        }
+        .btn-primary:hover {
+            box-shadow: 0 4px 12px rgba(139, 69, 19, 0.3);
+            transform: translateY(-1px);
+        }
+        .btn-secondary {
+            background-color: #e5dcc8;
+            color: #5d4e37;
+        }
+        .btn-secondary:hover {
+            background-color: #d4cbb8;
+        }
+        .profile-picture {
+            width: 150px;
+            height: 150px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 4px solid #e5dcc8;
+        }
+        .profile-picture-placeholder {
+            width: 150px;
+            height: 150px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #8b4513 0%, #654321 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fffef9;
+            font-size: 3rem;
+            font-weight: bold;
+            border: 4px solid #e5dcc8;
+        }
+    </style>
+</head>
+<body>
+    <div class="min-h-screen">
+        <!-- Header -->
+        <header class="bg-gradient-to-r from-blue-800 to-blue-900 text-white shadow-lg">
+            <div class="container mx-auto px-4 py-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h1 class="text-3xl font-bold" style="font-family: 'EB Garamond', Georgia, serif;">My Profile</h1>
+                        <p class="text-blue-200 mt-1">Manage your account settings</p>
+                    </div>
+                    <div class="flex gap-3">
+                        <a href="/" class="px-4 py-2 bg-blue-700 hover:bg-blue-600 rounded-lg transition">
+                            ← Back to Bible
+                        </a>
+                        <a href="/groups" class="px-4 py-2 bg-blue-700 hover:bg-blue-600 rounded-lg transition">
+                            Study Groups
+                        </a>
+                        <button id="logoutBtn" class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg transition">
+                            Logout
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="container mx-auto px-4 py-8 max-w-4xl">
+            <!-- Toast Notification -->
+            <div id="toast" class="fixed top-20 right-4 hidden p-4 rounded-lg shadow-lg z-50 max-w-md">
+                <p id="toastMessage" class="text-sm font-medium"></p>
+            </div>
+            
+            <div class="bible-page rounded-lg p-8">
+                <!-- Profile Header -->
+                <div class="text-center mb-8">
+                    <div class="flex justify-center mb-4">
+                        <div id="profilePictureContainer">
+                            <!-- Profile picture will be loaded here -->
+                        </div>
+                    </div>
+                    <h2 id="profileName" class="text-2xl font-bold" style="color: #5d4e37;"></h2>
+                    <p id="profileEmail" class="text-sm" style="color: #8b7355;"></p>
+                    <button id="editProfileBtn" class="mt-4 btn-primary px-6 py-2 rounded-lg font-medium">
+                        Edit Profile
+                    </button>
+                </div>
+
+                <!-- Profile Info (View Mode) -->
+                <div id="viewMode" class="space-y-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div class="p-4 rounded-lg" style="background-color: #f5f1e8;">
+                            <label class="block text-sm font-medium mb-1" style="color: #8b7355;">First Name</label>
+                            <p id="viewFirstName" class="text-lg font-semibold" style="color: #5d4e37;"></p>
+                        </div>
+                        <div class="p-4 rounded-lg" style="background-color: #f5f1e8;">
+                            <label class="block text-sm font-medium mb-1" style="color: #8b7355;">Last Name</label>
+                            <p id="viewLastName" class="text-lg font-semibold" style="color: #5d4e37;"></p>
+                        </div>
+                        <div class="p-4 rounded-lg" style="background-color: #f5f1e8;">
+                            <label class="block text-sm font-medium mb-1" style="color: #8b7355;">City</label>
+                            <p id="viewCity" class="text-lg font-semibold" style="color: #5d4e37;"></p>
+                        </div>
+                        <div class="p-4 rounded-lg" style="background-color: #f5f1e8;">
+                            <label class="block text-sm font-medium mb-1" style="color: #8b7355;">State</label>
+                            <p id="viewState" class="text-lg font-semibold" style="color: #5d4e37;"></p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Profile Edit Form (Hidden by default) -->
+                <div id="editMode" class="hidden">
+                    <!-- Status Message -->
+                    <div id="uploadStatus" class="hidden mb-4 p-3 rounded-lg"></div>
+                    
+                    <!-- Profile Picture Upload (outside form to avoid conflicts) -->
+                    <div class="text-center mb-6 p-4 rounded-lg" style="background-color: #f5f1e8;">
+                        <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Profile Picture</label>
+                        <p class="text-xs mb-3" style="color: #8b7355;">Maximum file size: 5MB (JPEG, PNG, GIF, WebP)</p>
+                        <input type="file" 
+                               id="profilePictureInput" 
+                               accept="image/jpeg,image/png,image/gif,image/webp"
+                               class="w-full text-sm"
+                               style="color: #5d4e37;">
+                    </div>
+                    
+                    <form id="profileForm" class="space-y-4">
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label for="firstName" class="block text-sm font-medium mb-2" style="color: #5d4e37;">
+                                    First Name *
+                                </label>
+                                <input type="text" id="firstName" name="first_name" required
+                                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                       style="background-color: #fffef9;">
+                            </div>
+                            <div>
+                                <label for="lastName" class="block text-sm font-medium mb-2" style="color: #5d4e37;">
+                                    Last Name *
+                                </label>
+                                <input type="text" id="lastName" name="last_name" required
+                                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                       style="background-color: #fffef9;">
+                            </div>
+                            <div>
+                                <label for="locationCity" class="block text-sm font-medium mb-2" style="color: #5d4e37;">
+                                    City
+                                </label>
+                                <input type="text" id="locationCity" name="location_city"
+                                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                       style="background-color: #fffef9;">
+                            </div>
+                            <div>
+                                <label for="locationState" class="block text-sm font-medium mb-2" style="color: #5d4e37;">
+                                    State
+                                </label>
+                                <input type="text" id="locationState" name="location_state"
+                                       class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                       style="background-color: #fffef9;">
+                            </div>
+                        </div>
+
+                        <div class="flex gap-3 mt-6">
+                            <button type="submit" class="btn-primary flex-1 py-3 px-6 rounded-lg font-medium">
+                                Save Changes
+                            </button>
+                            <button type="button" id="cancelEditBtn" class="btn-secondary py-3 px-6 rounded-lg font-medium">
+                                Cancel
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentUser = null;
+
+        // Check authentication
+        async function checkAuth() {
+            try {
+                const response = await fetch('/api/auth/status');
+                if (!response.ok) {
+                    window.location.href = '/login';
+                    return;
+                }
+                const data = await response.json();
+                if (!data.authenticated) {
+                    window.location.href = '/login';
+                }
+            } catch (error) {
+                console.error('Auth check failed:', error);
+                window.location.href = '/login';
+            }
+        }
+
+        // Load profile data
+        async function loadProfile() {
+            try {
+                const response = await fetch('/api/profile');
+                if (!response.ok) throw new Error('Failed to load profile');
+                
+                currentUser = await response.json();
+                displayProfile();
+            } catch (error) {
+                console.error('Error loading profile:', error);
+                showToast('Failed to load profile. Please refresh the page.', 'error');
+            }
+        }
+
+        // Display profile data
+        function displayProfile() {
+            if (!currentUser) return;
+
+            // Display name and email
+            document.getElementById('profileName').textContent = `${currentUser.first_name} ${currentUser.last_name}`;
+            document.getElementById('profileEmail').textContent = currentUser.email;
+
+            // Display profile picture
+            const container = document.getElementById('profilePictureContainer');
+            if (currentUser.profile_picture_url) {
+                container.innerHTML = `<img src="${currentUser.profile_picture_url}" class="profile-picture" alt="Profile picture">`;
+            } else {
+                const initials = (currentUser.first_name[0] || '') + (currentUser.last_name[0] || '');
+                container.innerHTML = `<div class="profile-picture-placeholder">${initials}</div>`;
+            }
+
+            // Display view mode data
+            document.getElementById('viewFirstName').textContent = currentUser.first_name || 'Not set';
+            document.getElementById('viewLastName').textContent = currentUser.last_name || 'Not set';
+            document.getElementById('viewCity').textContent = currentUser.location_city || 'Not set';
+            document.getElementById('viewState').textContent = currentUser.location_state || 'Not set';
+
+            // Populate edit form
+            document.getElementById('firstName').value = currentUser.first_name || '';
+            document.getElementById('lastName').value = currentUser.last_name || '';
+            document.getElementById('locationCity').value = currentUser.location_city || '';
+            document.getElementById('locationState').value = currentUser.location_state || '';
+        }
+
+        // Toggle edit mode
+        document.getElementById('editProfileBtn').addEventListener('click', () => {
+            document.getElementById('viewMode').classList.add('hidden');
+            document.getElementById('editMode').classList.remove('hidden');
+            document.getElementById('editProfileBtn').classList.add('hidden');
+            hideUploadStatus();
+        });
+
+        document.getElementById('cancelEditBtn').addEventListener('click', () => {
+            document.getElementById('editMode').classList.add('hidden');
+            document.getElementById('viewMode').classList.remove('hidden');
+            document.getElementById('editProfileBtn').classList.remove('hidden');
+            displayProfile(); // Reset form
+            hideUploadStatus();
+        });
+
+        // Status message helpers
+        function showUploadStatus(message, type) {
+            const statusDiv = document.getElementById('uploadStatus');
+            statusDiv.textContent = message;
+            statusDiv.classList.remove('hidden');
+            
+            if (type === 'success') {
+                statusDiv.style.backgroundColor = '#d1fae5';
+                statusDiv.style.color = '#065f46';
+            } else if (type === 'info') {
+                statusDiv.style.backgroundColor = '#dbeafe';
+                statusDiv.style.color = '#1e40af';
+            } else {
+                statusDiv.style.backgroundColor = '#fee2e2';
+                statusDiv.style.color = '#991b1b';
+            }
+            
+            // Auto-hide success messages after 3 seconds
+            if (type === 'success') {
+                setTimeout(() => hideUploadStatus(), 3000);
+            }
+        }
+
+        function hideUploadStatus() {
+            const statusDiv = document.getElementById('uploadStatus');
+            statusDiv.classList.add('hidden');
+        }
+
+        // Toast notification system
+        function showToast(message, type) {
+            const toast = document.getElementById('toast');
+            const toastMessage = document.getElementById('toastMessage');
+            
+            toastMessage.textContent = message;
+            toast.classList.remove('hidden');
+            
+            if (type === 'success') {
+                toast.style.backgroundColor = '#10b981';
+                toast.style.color = '#ffffff';
+            } else if (type === 'error') {
+                toast.style.backgroundColor = '#ef4444';
+                toast.style.color = '#ffffff';
+            } else {
+                toast.style.backgroundColor = '#3b82f6';
+                toast.style.color = '#ffffff';
+            }
+            
+            // Auto-hide after 4 seconds
+            setTimeout(() => {
+                toast.classList.add('hidden');
+            }, 4000);
+        }
+
+        // Profile picture upload - simplified, no button needed
+        document.getElementById('profilePictureInput').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            // Validate file size (5MB max)
+            const maxSize = 5 * 1024 * 1024; // 5MB in bytes
+            if (file.size > maxSize) {
+                showUploadStatus('File too large. Maximum size is 5MB.', 'error');
+                e.target.value = ''; // Reset input
+                return;
+            }
+
+            // Validate file type
+            const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+            if (!validTypes.includes(file.type)) {
+                showUploadStatus('Invalid file type. Please use JPEG, PNG, GIF, or WebP.', 'error');
+                e.target.value = ''; // Reset input
+                return;
+            }
+
+            // Show uploading status
+            showUploadStatus('Uploading...', 'info');
+
+            const formData = new FormData();
+            formData.append('profile_picture', file);
+
+            try {
+                const response = await fetch('/api/profile/picture', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(errorText || 'Failed to upload picture');
+                }
+                
+                const data = await response.json();
+                currentUser.profile_picture_url = data.url;
+                displayProfile();
+                showUploadStatus('Profile picture updated successfully!', 'success');
+            } catch (error) {
+                console.error('Error uploading picture:', error);
+                showUploadStatus('Failed to upload picture: ' + error.message, 'error');
+            } finally {
+                // Don't reset input - let user see what they selected
+            }
+        });
+
+        // Update profile
+        document.getElementById('profileForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const profileData = {
+                first_name: document.getElementById('firstName').value.trim(),
+                last_name: document.getElementById('lastName').value.trim(),
+                profile_picture_url: currentUser.profile_picture_url || '',
+                location_city: document.getElementById('locationCity').value.trim(),
+                location_state: document.getElementById('locationState').value.trim()
+            };
+
+            try {
+                const response = await fetch('/api/profile/update', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(profileData)
+                });
+
+                if (!response.ok) throw new Error('Failed to update profile');
+                
+                currentUser = await response.json();
+                displayProfile();
+                
+                // Switch back to view mode
+                document.getElementById('editMode').classList.add('hidden');
+                document.getElementById('viewMode').classList.remove('hidden');
+                document.getElementById('editProfileBtn').classList.remove('hidden');
+                
+                showToast('Profile updated successfully!', 'success');
+            } catch (error) {
+                console.error('Error updating profile:', error);
+                showToast('Failed to update profile. Please try again.', 'error');
+            }
+        });
+
+        // Logout
+        document.getElementById('logoutBtn').addEventListener('click', async () => {
+            try {
+                await fetch('/auth/logout', { method: 'POST' });
+                window.location.href = '/login';
+            } catch (error) {
+                console.error('Logout error:', error);
+                window.location.href = '/login';
+            }
+        });
+
+        // Initialize
+        checkAuth();
+        loadProfile();
+    </script>
+</body>
+</html>

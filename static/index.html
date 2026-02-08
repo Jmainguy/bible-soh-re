@@ -10,6 +10,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,600;0,700;1,400&family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
+            /* OSIS compatibility: The following CSS supports OSIS output tags such as <sup class="cross-ref">, <sup class="footnote">, <span class="strongs">, etc. */
         body {
             background-color: #f5f1e8;
         }
@@ -54,8 +55,11 @@
             font-size: 0.65rem;
             cursor: help;
         }
-        .hide-references .verse-text sup {
-            display: none;
+        .hide-references .verse sup,
+        .hide-references .verse-text sup,
+        .hide-references .verse sup.cross-ref,
+        .hide-references .verse sup.footnote {
+            display: none !important;
         }
         .verse-references {
             font-size: 0.875rem;
@@ -277,6 +281,50 @@
         .verse-comments-empty {
             margin-top: 0.5rem;
         }
+
+        /* OSIS Element Styles */
+        .strongs {
+            font-size: 0.5rem;
+            color: #059669;
+            font-weight: 500;
+            margin-left: 0.1rem;
+            cursor: help;
+            vertical-align: super;
+            line-height: 0;
+        }
+        .strongs:hover {
+            color: #047857;
+            text-decoration: underline;
+        }
+        .footnote {
+            color: #dc2626;
+            font-size: 0.65rem;
+            cursor: help;
+            font-weight: 600;
+        }
+        .cross-ref {
+            color: #2563eb;
+            font-size: 0.65rem;
+            cursor: help;
+            font-weight: 600;
+        }
+        .red-letter {
+            color: #dc2626;
+        }
+        .lemma {
+            color: #0891b2;
+            font-size: 0.7rem;
+            font-style: italic;
+        }
+        .morph {
+            color: #0891b2;
+            font-size: 0.7rem;
+            font-style: italic;
+        }
+        .xlit {
+            color: #9333ea;
+            font-style: italic;
+        }
     </style>
 </head>
 <body class="bg-gray-50">
@@ -352,6 +400,40 @@
                             <select id="translationSelect" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
                                 <option value="">Loading...</option>
                             </select>
+                        </div>
+
+                        <!-- OSIS Filters -->
+                        <div class="filter-panel mb-4">
+                            <div class="filter-title">Display Options</div>
+                            <!-- Strong's Numbers UI removed per request (feature deferred) -->
+                            <div class="filter-option">
+                                <input type="checkbox" id="filterFootnotes" class="filter-checkbox" checked>
+                                <label for="filterFootnotes" class="filter-label">Footnotes</label>
+                            </div>
+                            <div class="filter-option">
+                                <input type="checkbox" id="filterScripref" class="filter-checkbox" checked>
+                                <label for="filterScripref" class="filter-label">Cross-References</label>
+                            </div>
+                            <div class="filter-option">
+                                <input type="checkbox" id="filterHeadings" class="filter-checkbox" checked>
+                                <label for="filterHeadings" class="filter-label">Section Headings</label>
+                            </div>
+                            <div class="filter-option">
+                                <input type="checkbox" id="filterRedLetters" class="filter-checkbox" checked>
+                                <label for="filterRedLetters" class="filter-label">Red Letters</label>
+                            </div>
+                            <div class="filter-option">
+                                <input type="checkbox" id="filterLemma" class="filter-checkbox" checked>
+                                <label for="filterLemma" class="filter-label">Lemma</label>
+                            </div>
+                            <div class="filter-option">
+                                <input type="checkbox" id="filterMorph" class="filter-checkbox" checked>
+                                <label for="filterMorph" class="filter-label">Morphology</label>
+                            </div>
+                            <div class="filter-option">
+                                <input type="checkbox" id="filterXlit" class="filter-checkbox" checked>
+                                <label for="filterXlit" class="filter-label">Transliteration</label>
+                            </div>
                         </div>
                         
                         <h2 class="text-xl font-bold mb-4 text-gray-800">Books</h2>

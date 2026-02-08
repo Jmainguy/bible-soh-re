@@ -11,6 +11,31 @@ let selectedTranslation = ''; // Currently selected translation
 let translationInfo = {}; // Translation metadata (fullName, description)
 let sidebarVisible = true; // Sidebar visibility state
 let currentUserId = null; // Current authenticated user ID
+let userDefaultTranslation = null; // User's default translation preference
+
+// OSIS Filter Preferences (defaults to all enabled)
+let osisFilters = {
+    showStrongs: false,
+    showFootnotes: true,
+    showScripref: true,
+    showHeadings: true,
+    showRedLetters: true,
+    showLemma: true,
+    showMorph: true,
+    showXlit: true
+};
+
+// Cache last loaded chapter verses so we can re-render client-side for instant toggles
+let lastLoadedVerses = null;
+
+// Verse comments / notes state (some pages may not include the notes UI)
+let notesVisible = false;
+let currentNoteType = 'personal';
+let notesPollingInterval = null;
+let currentNotesData = null;
+let openCommentsSections = new Set();
+let commentsData = new Map();
+let selectedGroupId = null;
 
 // Load UI preferences from localStorage
 function loadUIPreferences() {
@@ -58,11 +83,22 @@ const sidebarIcon = document.getElementById('sidebarIcon');
 const contentWrapper = document.getElementById('contentWrapper');
 const sidebarOverlay = document.getElementById('sidebarOverlay');
 
+// Filter checkbox elements
+const filterStrongsCheckbox = document.getElementById('filterStrongs');
+const filterFootnotesCheckbox = document.getElementById('filterFootnotes');
+const filterScriprefCheckbox = document.getElementById('filterScripref');
+const filterHeadingsCheckbox = document.getElementById('filterHeadings');
+const filterRedLettersCheckbox = document.getElementById('filterRedLetters');
+const filterLemmaCheckbox = document.getElementById('filterLemma');
+const filterMorphCheckbox = document.getElementById('filterMorph');
+const filterXlitCheckbox = document.getElementById('filterXlit');
+
 // Update browser URL with current state
 function updateURL(verseNum = null) {
     if (!currentBook || !currentChapter || !selectedTranslation) return;
     
     const params = new URLSearchParams();
+    // Include translation in URL for display purposes
     params.set('translation', selectedTranslation);
     params.set('book', currentBook);
     params.set('chapter', currentChapter);
@@ -133,10 +169,15 @@ async function init() {
     const chapterParam = urlParams.get('chapter');
     const verseParam = urlParams.get('verse');
     
-    // Set translation from URL if provided, otherwise default to NASB
+    // Set translation priority: URL param > user default > NASB
     if (translationParam && translationInfo[translationParam]) {
         selectedTranslation = translationParam;
         translationSelect.value = translationParam;
+        updateHeader();
+    } else if (userDefaultTranslation && translationInfo[userDefaultTranslation]) {
+        // Use user's default translation if logged in and no URL param
+        selectedTranslation = userDefaultTranslation;
+        translationSelect.value = userDefaultTranslation;
         updateHeader();
     } else if (translationInfo['nasb']) {
         selectedTranslation = 'nasb';
@@ -170,15 +211,19 @@ async function init() {
         const savedPosition = await loadSavedPosition();
         
         if (savedPosition) {
-            // Use saved position
+            // Use saved position for book and chapter
             const book = bibleBooks.find(b => b.name === savedPosition.book);
-            if (book && translationInfo[savedPosition.translation]) {
+            if (book) {
                 currentBook = savedPosition.book;
                 currentChapter = savedPosition.chapter;
                 maxChapter = book.chapterCount;
-                selectedTranslation = savedPosition.translation;
-                translationSelect.value = savedPosition.translation;
-                updateHeader();
+                
+                // Only use saved translation if no user default was set
+                if (!userDefaultTranslation && savedPosition.translation && translationInfo[savedPosition.translation]) {
+                    selectedTranslation = savedPosition.translation;
+                    translationSelect.value = savedPosition.translation;
+                    updateHeader();
+                }
                 
                 updateChapterSelector();
                 
@@ -342,9 +387,30 @@ async function loadChapter() {
     try {
         versesContainer.innerHTML = '<div class="text-center text-gray-500 py-8">Loading...</div>';
         
-        const url = `/api/chapter?book=${encodeURIComponent(currentBook)}&chapter=${currentChapter}&translation=${selectedTranslation}`;
+        // Build URL with filter parameters
+        let url = `/api/chapter?book=${encodeURIComponent(currentBook)}&chapter=${currentChapter}&translation=${selectedTranslation}`;
+        
+        // Add filter parameters (only add if user-specific filters differ from defaults)
+        if (currentUserId) {
+            // Let backend use user's saved preferences by not passing filter params
+            // This allows the backend to read from user's database preferences
+        } else {
+            // For unauthenticated users, use UI state
+            url += `&showStrongs=${osisFilters.showStrongs}`;
+            url += `&showFootnotes=${osisFilters.showFootnotes}`;
+            url += `&showScripref=${osisFilters.showScripref}`;
+            url += `&showHeadings=${osisFilters.showHeadings}`;
+            url += `&showRedLetters=${osisFilters.showRedLetters}`;
+            url += `&showLemma=${osisFilters.showLemma}`;
+            url += `&showMorph=${osisFilters.showMorph}`;
+            url += `&showXlit=${osisFilters.showXlit}`;
+        }
+        
         const response = await fetch(url);
         const data = await response.json();
+
+        // Cache verses for client-side re-rendering
+        lastLoadedVerses = data.verses || null;
         
         // Update title
         chapterTitle.textContent = `${data.book} ${data.chapter}`;
@@ -436,6 +502,7 @@ async function renderVerses(verses) {
         const crossReferences = verseData.crossReferences || [];
         const notes = verseData.notes || [];
         const studyNotes = verseData.studyNotes || [];
+        const strongsNumbers = verseData.strongsNumbers || [];
         
         // Display section title if present
         if (sectionTitle) {
@@ -449,8 +516,8 @@ async function renderVerses(verses) {
         verseDiv.className = 'verse';
         verseDiv.setAttribute('data-verse', verseNum);
         
-        // Create verse URL
-        const verseUrl = `${window.location.origin}/?translation=${selectedTranslation}&book=${encodeURIComponent(currentBook)}&chapter=${currentChapter}&verse=${verseNum}`;
+        // Create verse URL without translation parameter to use user's default
+        const verseUrl = `${window.location.origin}/?book=${encodeURIComponent(currentBook)}&chapter=${currentChapter}&verse=${verseNum}`;
         
         let html = `
             <a href="${verseUrl}" class="verse-number" title="Click to copy link, right-click to open in new tab">${verseNum}</a>
@@ -478,7 +545,7 @@ async function renderVerses(verses) {
             html += '<span class="font-semibold">Cross-references: </span>';
             crossReferences.forEach((ref, refIdx) => {
                 const marker = ref.marker ? `[${ref.marker}] ` : '';
-                const refText = ref.text || ref; // Handle both old string format and new object format
+                const refText = normalizeReferenceInput(ref); // Handle both old string format and new object format
                 html += `<span class="reference">${marker}${createReferenceLink(refText)}</span>`;
                 if (refIdx < crossReferences.length - 1) {
                     html += '<span class="mx-1">;</span>';
@@ -491,7 +558,7 @@ async function renderVerses(verses) {
         if (notes.length > 0 && showReferences) {
             notes.forEach(note => {
                 const marker = note.marker ? `[${note.marker}] ` : '';
-                const noteText = note.text || note; // Handle both old string format and new object format
+                const noteText = normalizeReferenceInput(note); // Handle both old string format and new object format
                 html += `<div class="verse-references">
                     <span class="font-semibold">${marker}</span>${createReferenceLink(noteText)}
                 </div>`;
@@ -502,7 +569,7 @@ async function renderVerses(verses) {
         if (studyNotes.length > 0 && showReferences) {
             studyNotes.forEach(note => {
                 const marker = note.marker ? `[${note.marker}] ` : '';
-                const noteText = note.text || note; // Handle both old string format and new object format
+                const noteText = normalizeReferenceInput(note); // Handle both old string format and new object format
                 html += `<div class="verse-references">
                     <span class="font-semibold">Study note: ${marker}</span>${createReferenceLink(noteText)}
                 </div>`;
@@ -514,7 +581,31 @@ async function renderVerses(verses) {
             const comments = verseCommentsMap.get(verseNum);
             html += renderVerseCommentsSection(currentBook, currentChapter, verseNum, comments);
         }
-        
+
+        // Show lemma/xlit annotations when their filters are enabled
+        if (strongsNumbers.length > 0 && ((filterLemmaCheckbox && filterLemmaCheckbox.checked) || (filterXlitCheckbox && filterXlitCheckbox.checked))) {
+            let annHtml = '<div class="word-annotations text-sm text-gray-600 mt-1">';
+            annHtml += strongsNumbers.map(s => {
+                const parts = [];
+                // Do not display lemma tokens that are actually Strong's IDs (e.g., "strong:G1234")
+                if (filterLemmaCheckbox && filterLemmaCheckbox.checked && s.lemma) {
+                    if (!/^strongs?:/i.test(s.lemma) && !/^strong:/i.test(s.lemma)) {
+                        // strip common prefixes like "BSBlex:" for display
+                        const lemmaDisplay = s.lemma.replace(/^lemma\.[^:]+:/, '').replace(/^BSBlex:/, '');
+                        parts.push(`<span class="lemma">Lemma: ${escapeHtml(lemmaDisplay)}</span>`);
+                    }
+                }
+                if (filterXlitCheckbox && filterXlitCheckbox.checked && s.xlit) {
+                    const xlitDisplay = s.xlit.replace(/^Latn:/, '');
+                    parts.push(`<span class="xlit">Xlit: ${escapeHtml(xlitDisplay)}</span>`);
+                }
+                if (parts.length === 0) return '';
+                return `<div class="annotation-item">${parts.join(' | ')} <span class="annotation-word text-gray-500">— ${escapeHtml(s.word)}</span></div>`;
+            }).filter(Boolean).join('');
+            annHtml += '</div>';
+            html += annHtml;
+        }
+
         verseDiv.innerHTML = html;
         container.appendChild(verseDiv);
     });
@@ -666,6 +757,16 @@ function createReferenceLink(refText) {
     return html || escapeHtml(refText);
 }
 
+// Normalize reference input (object or string) into a string suitable for createReferenceLink
+function normalizeReferenceInput(ref) {
+    if (!ref) return '';
+    if (typeof ref === 'string') return ref;
+    if (typeof ref.text === 'string' && ref.text.trim()) return ref.text;
+    if (Array.isArray(ref.references)) return ref.references.join('; ');
+    if (ref.reference && typeof ref.reference === 'string') return ref.reference;
+    return '';
+}
+
 // Helper function to create a single reference link
 function createSingleReferenceLink(bookAbbrev, chapter, verse, displayText) {
     const fullBookName = getFullBookName(bookAbbrev);
@@ -683,21 +784,14 @@ function createSingleReferenceLink(bookAbbrev, chapter, verse, displayText) {
 // Format verse text - allows <i> and <sup> tags, escapes everything else
 function formatVerseText(text, verseNum) {
     if (!text) return '';
-    
-    // Split on <i>, </i>, <sup>, and </sup> tags
-    const parts = text.split(/(<\/?i>|<\/?sup>)/);
-    let html = '';
-    
-    for (let i = 0; i < parts.length; i++) {
-        const part = parts[i];
-        
-        if (part === '<i>' || part === '</i>' || part === '<sup>' || part === '</sup>') {
-            html += part;
-        } else if (part) {
-            html += escapeHtml(part);
-        }
-    }
-    
+    // Allow OSIS tags: <i>, <b>, <sup>, <span>, <small>, <strong>, <em>, <u>, <s>, <mark>, <sub>, <ruby>, <rt>, <rb>, <rp>, <br>, <w>, <div>, <p>
+    // Remove all other tags for safety
+    // This regex will keep allowed tags and escape everything else
+    const allowedTags = /<(\/?)(i|b|sup|span|small|strong|em|u|s|mark|sub|ruby|rt|rb|rp|br|w|div|p)(\s+[^>]*)?>/gi;
+    // Escape everything, then unescape allowed tags
+    let html = escapeHtml(text);
+    html = html.replace(/&lt;(\/?)(i|b|sup|span|small|strong|em|u|s|mark|sub|ruby|rt|rb|rp|br|w|div|p)(\s+[^&]*)&gt;/gi, '<$1$2$3>');
+    html = html.replace(/&lt;(\/?)(i|b|sup|span|small|strong|em|u|s|mark|sub|ruby|rt|rb|rp|br|w|div|p)&gt;/gi, '<$1$2>');
     return html;
 }
 
@@ -740,6 +834,16 @@ function navigateToReference(bookName, chapter, verse = null) {
             }
         });
     }
+
+    // Filter checkboxes
+    if (filterStrongsCheckbox) filterStrongsCheckbox.addEventListener('change', handleFilterChange);
+    if (filterFootnotesCheckbox) filterFootnotesCheckbox.addEventListener('change', handleFilterChange);
+    if (filterScriprefCheckbox) filterScriprefCheckbox.addEventListener('change', handleFilterChange);
+    if (filterHeadingsCheckbox) filterHeadingsCheckbox.addEventListener('change', handleFilterChange);
+    if (filterRedLettersCheckbox) filterRedLettersCheckbox.addEventListener('change', handleFilterChange);
+    if (filterLemmaCheckbox) filterLemmaCheckbox.addEventListener('change', handleFilterChange);
+    if (filterMorphCheckbox) filterMorphCheckbox.addEventListener('change', handleFilterChange);
+    if (filterXlitCheckbox) filterXlitCheckbox.addEventListener('change', handleFilterChange);
 }
 
 // Escape HTML to prevent XSS
@@ -1145,11 +1249,22 @@ async function checkAuthStatus() {
             userEmail.textContent = data.email;
             currentUserId = data.id;
             
+            // Store user's default translation
+            if (data.default_translation) {
+                userDefaultTranslation = data.default_translation;
+            }
+            
             // Update profile picture in user menu
             const userPicDiv = document.getElementById('userProfilePic');
             if (userPicDiv) {
                 userPicDiv.innerHTML = getProfilePictureHTML(data, 'w-8 h-8');
             }
+            
+            // Load filter preferences
+            await loadFilterPreferences();
+            
+            // Load user groups for verse comments
+            await loadUserGroupsForComments();
             
             // Setup user dropdown toggle
             userMenuButton.addEventListener('click', (e) => {
@@ -1199,7 +1314,16 @@ async function loadUserGroupsForComments() {
     const createPersonalNoteBtn = document.getElementById('createPersonalNoteBtn');
     const createGroupNoteBtn = document.getElementById('createGroupNoteBtn');
     const groupNoteSelector = document.getElementById('groupNoteSelector');
-    
+    const notesSection = document.getElementById('notesSection');
+    const toggleNotesBtn = document.getElementById('toggleNotesBtn');
+    const personalNotesTab = document.getElementById('personalNotesTab');
+    const groupNotesTab = document.getElementById('groupNotesTab');
+
+    // If the notes UI isn't present on this page, bail out gracefully
+    if (!notesSection || !toggleNotesBtn || !personalNotesTab || !groupNotesTab || !createPersonalNoteBtn || !createGroupNoteBtn || !groupNoteSelector) {
+        return;
+    }
+
     // Show notes section and apply saved visibility state
     notesSection.classList.remove('hidden');
     toggleNotesBtn.textContent = notesVisible ? 'Hide Notes' : 'Show Notes';
@@ -1913,6 +2037,138 @@ function updateNoteContentInUI(noteId, newContent) {
             const escapedContent = escapeHtml(newContent).replace(/\\/g, '\\\\').replace(/`/g, '\\`');
             editBtn.setAttribute('onclick', `editNote('${noteId}', \`${escapedContent}\`)`);
         }
+    }
+}
+
+// Load OSIS filter preferences from backend
+async function loadFilterPreferences() {
+    try {
+        const response = await fetch('/api/profile/filters/get');
+        if (response.ok) {
+            const data = await response.json();
+            if (data.filters) {
+                // Update state
+                osisFilters.showStrongs = data.filters.ShowStrongs;
+                osisFilters.showFootnotes = data.filters.ShowFootnotes;
+                osisFilters.showScripref = data.filters.ShowScripref;
+                osisFilters.showHeadings = data.filters.ShowHeadings;
+                osisFilters.showRedLetters = data.filters.ShowRedLetters;
+                osisFilters.showLemma = data.filters.ShowLemma;
+                osisFilters.showMorph = data.filters.ShowMorph;
+                osisFilters.showXlit = data.filters.ShowXlit;
+                
+                // Update UI
+                if (filterStrongsCheckbox) filterStrongsCheckbox.checked = osisFilters.showStrongs;
+                if (filterFootnotesCheckbox) filterFootnotesCheckbox.checked = osisFilters.showFootnotes;
+                if (filterScriprefCheckbox) filterScriprefCheckbox.checked = osisFilters.showScripref;
+                if (filterHeadingsCheckbox) filterHeadingsCheckbox.checked = osisFilters.showHeadings;
+                if (filterRedLettersCheckbox) filterRedLettersCheckbox.checked = osisFilters.showRedLetters;
+                if (filterLemmaCheckbox) filterLemmaCheckbox.checked = osisFilters.showLemma;
+                if (filterMorphCheckbox) filterMorphCheckbox.checked = osisFilters.showMorph;
+                if (filterXlitCheckbox) filterXlitCheckbox.checked = osisFilters.showXlit;
+                
+                console.log('Loaded filter preferences from server');
+            }
+        }
+    } catch (error) {
+        console.error('Failed to load filter preferences:', error);
+    }
+}
+
+// Save OSIS filter preferences to backend
+async function saveFilterPreferences() {
+    try {
+        const response = await fetch('/api/profile/filters', {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                ShowStrongs: osisFilters.showStrongs,
+                ShowFootnotes: osisFilters.showFootnotes,
+                ShowScripref: osisFilters.showScripref,
+                ShowHeadings: osisFilters.showHeadings,
+                ShowRedLetters: osisFilters.showRedLetters,
+                ShowLemma: osisFilters.showLemma,
+                ShowMorph: osisFilters.showMorph,
+                ShowXlit: osisFilters.showXlit
+            })
+        });
+        
+        if (response.ok) {
+            console.log('Saved filter preferences to server');
+        } else {
+            console.error('Failed to save filter preferences');
+        }
+    } catch (error) {
+        console.error('Error saving filter preferences:', error);
+    }
+}
+
+// Handle filter checkbox changes
+function handleFilterChange() {
+    // Determine which filters changed and apply client-side-only toggles instantly.
+    const prev = { ...osisFilters };
+    // Update state from checkboxes
+    osisFilters.showStrongs = filterStrongsCheckbox.checked;
+    osisFilters.showFootnotes = filterFootnotesCheckbox.checked;
+    osisFilters.showScripref = filterScriprefCheckbox.checked;
+    osisFilters.showHeadings = filterHeadingsCheckbox.checked;
+    osisFilters.showRedLetters = filterRedLettersCheckbox.checked;
+    osisFilters.showLemma = filterLemmaCheckbox.checked;
+    osisFilters.showMorph = filterMorphCheckbox.checked;
+    osisFilters.showXlit = filterXlitCheckbox.checked;
+
+    // Save to backend (debounced would be better, but this works)
+    if (currentUserId) {
+        saveFilterPreferences();
+    }
+
+    // Client-only filters that do not require a server re-fetch
+    const clientOnlyChanged = (prev.showLemma !== osisFilters.showLemma) || (prev.showXlit !== osisFilters.showXlit) || (prev.showMorph !== osisFilters.showMorph);
+    if (clientOnlyChanged) {
+        // If user enabled lemma/xlit/morph and we have cached verses, check whether cached data includes annotations.
+        const wantsAnnotations = osisFilters.showLemma || osisFilters.showXlit || osisFilters.showMorph;
+        if (lastLoadedVerses && wantsAnnotations) {
+            // Determine if any verse has strongsNumbers (server-provided annotations)
+            const hasAnyAnnotations = lastLoadedVerses.some(v => Array.isArray(v.strongsNumbers) && v.strongsNumbers.length > 0);
+            if (!hasAnyAnnotations) {
+                // Need to fetch chapter with annotations enabled from server
+                loadChapter();
+                return;
+            }
+        }
+
+        // If we have cached verses, re-render client-side so changes are instant
+        if (lastLoadedVerses) {
+            renderVerses(lastLoadedVerses);
+            return;
+        }
+
+        // Fallback: Toggle visibility of existing annotation blocks without reloading
+        const annBlocks = document.querySelectorAll('.word-annotations');
+        annBlocks.forEach(block => {
+            const lemmaElems = block.querySelectorAll('.lemma');
+            lemmaElems.forEach(e => {
+                e.style.display = (osisFilters.showLemma ? '' : 'none');
+            });
+            const xlitElems = block.querySelectorAll('.xlit');
+            xlitElems.forEach(e => {
+                e.style.display = (osisFilters.showXlit ? '' : 'none');
+            });
+        });
+
+        // If user enabled lemma/xlit but there are no annotation blocks present (server didn't render them), reload chapter to fetch annotations
+        if (wantsAnnotations && annBlocks.length === 0) {
+            loadChapter();
+            return;
+        }
+    }
+
+    // Server-side filters that require re-fetch: strongs, footnotes, scripref, headings, red letters
+    const serverSideChanged = (prev.showStrongs !== osisFilters.showStrongs) || (prev.showFootnotes !== osisFilters.showFootnotes) || (prev.showScripref !== osisFilters.showScripref) || (prev.showHeadings !== osisFilters.showHeadings) || (prev.showRedLetters !== osisFilters.showRedLetters);
+    if (serverSideChanged) {
+        loadChapter();
     }
 }
 

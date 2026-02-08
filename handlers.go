@@ -1939,6 +1939,109 @@ func (h *AuthHandler) handleUpdateProfile(w http.ResponseWriter, r *http.Request
 	respondJSON(w, updatedUser)
 }
 
+// handleUpdateDefaultTranslation updates the current user's default Bible translation
+func (h *AuthHandler) handleUpdateDefaultTranslation(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPut) {
+		return
+	}
+
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+
+	var data struct {
+		Translation string `json:"translation"`
+	}
+
+	if !decodeJSONBody(w, r, &data) {
+		return
+	}
+
+	if data.Translation == "" {
+		respondError(w, "Translation is required", http.StatusBadRequest)
+		return
+	}
+
+	// Update default translation in database
+	if err := h.db.UpdateDefaultTranslation(user.ID, data.Translation); err != nil {
+		log.Printf("Failed to update default translation: %v", err)
+		respondError(w, "Failed to update default translation", http.StatusInternalServerError)
+		return
+	}
+
+	// Return updated user
+	updatedUser, err := h.db.GetUserByID(user.ID)
+	if err != nil {
+		respondError(w, "Failed to get updated user", http.StatusInternalServerError)
+		return
+	}
+
+	respondJSON(w, updatedUser)
+}
+
+// handleUpdateFilters updates a user's OSIS filter preferences
+func (h *AuthHandler) handleUpdateFilters(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPut) {
+		return
+	}
+
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+
+	var filters OSISFilters
+	if !decodeJSONBody(w, r, &filters) {
+		return
+	}
+
+	// Update filters in database
+	if err := h.db.UpdateFilters(user.ID, filters); err != nil {
+		log.Printf("Failed to update filters: %v", err)
+		respondError(w, "Failed to update filters", http.StatusInternalServerError)
+		return
+	}
+
+	// Return updated user with new filter preferences
+	updatedUser, err := h.db.GetUserByID(user.ID)
+	if err != nil {
+		log.Printf("Failed to get updated user: %v", err)
+		respondError(w, "Failed to get updated user", http.StatusInternalServerError)
+		return
+	}
+
+	respondJSON(w, updatedUser)
+}
+
+// handleGetFilters returns a user's current filter preferences
+func (h *AuthHandler) handleGetFilters(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+
+	// Convert User filter fields to OSISFilters struct
+	filters := OSISFilters{
+		ShowStrongs:    user.FilterStrongs,
+		ShowFootnotes:  user.FilterFootnotes,
+		ShowScripref:   user.FilterScripref,
+		ShowHeadings:   user.FilterHeadings,
+		ShowRedLetters: user.FilterRedLetters,
+		ShowLemma:      user.FilterLemma,
+		ShowMorph:      user.FilterMorph,
+		ShowXlit:       user.FilterXlit,
+	}
+
+	respondJSON(w, map[string]interface{}{
+		"filters": filters,
+	})
+}
+
 // handleUploadProfilePicture handles profile picture uploads
 func (h *AuthHandler) handleUploadProfilePicture(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {

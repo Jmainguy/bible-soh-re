@@ -536,6 +536,7 @@ func (h *AuthHandler) handleGetUserInfo(w http.ResponseWriter, r *http.Request) 
 		"profile_picture_url": user.ProfilePictureURL,
 		"location_city":       user.LocationCity,
 		"location_state":      user.LocationState,
+		"default_translation": user.DefaultTranslation,
 	}); err != nil {
 		log.Printf("Error encoding JSON response: %v", err)
 	}

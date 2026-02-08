@@ -260,7 +260,7 @@ func (d *Database) GetPrayerComments(prayerID int64) ([]*PrayerComment, error) {
 		 FROM prayer_comments pc
 		 INNER JOIN users u ON pc.user_id = u.id
 		 WHERE pc.prayer_id = ?
-		 ORDER BY pc.created_at ASC`,
+		 ORDER BY pc.created_at DESC`,
 		prayerID,
 	)
 	if err != nil {

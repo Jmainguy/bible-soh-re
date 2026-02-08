@@ -13,19 +13,28 @@ import (
 
 // User represents a user in the system
 type User struct {
-	ID                int64          `json:"id"`
-	Email             string         `json:"email"`
-	Username          string         `json:"username"`
-	FirstName         string         `json:"first_name"`
-	LastName          string         `json:"last_name"`
-	ProfilePictureURL string         `json:"profile_picture_url"`
-	LocationCity      string         `json:"location_city"`
-	LocationState     string         `json:"location_state"`
-	PasswordHash      sql.NullString `json:"-"`              // Never expose password hash
-	OAuthProvider     string         `json:"oauth_provider"` // "local", "google", or "github"
-	OAuthID           sql.NullString `json:"-"`              // Don't expose OAuth ID
-	CreatedAt         time.Time      `json:"created_at"`
-	UpdatedAt         time.Time      `json:"updated_at"`
+	ID                 int64          `json:"id"`
+	Email              string         `json:"email"`
+	Username           string         `json:"username"`
+	FirstName          string         `json:"first_name"`
+	LastName           string         `json:"last_name"`
+	ProfilePictureURL  string         `json:"profile_picture_url"`
+	LocationCity       string         `json:"location_city"`
+	LocationState      string         `json:"location_state"`
+	DefaultTranslation string         `json:"default_translation"` // User's preferred Bible translation
+	FilterStrongs      bool           `json:"filter_strongs"`      // Show Strong's numbers
+	FilterFootnotes    bool           `json:"filter_footnotes"`    // Show footnotes
+	FilterScripref     bool           `json:"filter_scripref"`     // Show cross-references
+	FilterHeadings     bool           `json:"filter_headings"`     // Show section headings
+	FilterRedLetters   bool           `json:"filter_redletters"`   // Show red letters (words of Christ)
+	FilterLemma        bool           `json:"filter_lemma"`        // Show lemma (root word)
+	FilterMorph        bool           `json:"filter_morph"`        // Show morphology
+	FilterXlit         bool           `json:"filter_xlit"`         // Show transliteration
+	PasswordHash       sql.NullString `json:"-"`                   // Never expose password hash
+	OAuthProvider      string         `json:"oauth_provider"`      // "local", "google", or "github"
+	OAuthID            sql.NullString `json:"-"`                   // Don't expose OAuth ID
+	CreatedAt          time.Time      `json:"created_at"`
+	UpdatedAt          time.Time      `json:"updated_at"`
 }
 
 // Session represents a user session
@@ -84,6 +93,7 @@ func (d *Database) initTables() error {
 			profile_picture_url TEXT DEFAULT '',
 			location_city TEXT DEFAULT '',
 			location_state TEXT DEFAULT '',
+			default_translation TEXT DEFAULT 'nasb',
 			password_hash TEXT,
 			oauth_provider TEXT DEFAULT 'local',
 			oauth_id TEXT,
@@ -235,10 +245,19 @@ func (d *Database) initTables() error {
 		`ALTER TABLE users ADD COLUMN profile_picture_url TEXT DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN location_city TEXT DEFAULT ''`,
 		`ALTER TABLE users ADD COLUMN location_state TEXT DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN default_translation TEXT DEFAULT 'nasb'`,
 		`ALTER TABLE prayer_requests ADD COLUMN archived_at DATETIME`,
 		`ALTER TABLE prayer_requests ADD COLUMN answer_explanation TEXT DEFAULT ''`,
 		`ALTER TABLE notes ADD COLUMN verse INTEGER`,
 		`ALTER TABLE note_comments ADD COLUMN parent_id INTEGER`,
+		`ALTER TABLE users ADD COLUMN filter_strongs INTEGER DEFAULT 1`,
+		`ALTER TABLE users ADD COLUMN filter_footnotes INTEGER DEFAULT 1`,
+		`ALTER TABLE users ADD COLUMN filter_scripref INTEGER DEFAULT 1`,
+		`ALTER TABLE users ADD COLUMN filter_headings INTEGER DEFAULT 1`,
+		`ALTER TABLE users ADD COLUMN filter_redletters INTEGER DEFAULT 1`,
+		`ALTER TABLE users ADD COLUMN filter_lemma INTEGER DEFAULT 1`,
+		`ALTER TABLE users ADD COLUMN filter_morph INTEGER DEFAULT 1`,
+		`ALTER TABLE users ADD COLUMN filter_xlit INTEGER DEFAULT 1`,
 	}
 
 	for _, migration := range migrations {
@@ -367,68 +386,128 @@ func (d *Database) CreateOAuthUser(email, firstName, lastName, provider, oauthID
 // GetUserByID retrieves a user by ID
 func (d *Database) GetUserByID(id int64) (*User, error) {
 	user := &User{}
+	var filterStrongs, filterFootnotes, filterScripref, filterHeadings, filterRedLetters, filterLemma, filterMorph, filterXlit int
 	err := d.db.QueryRow(
 		`SELECT id, email, username, first_name, last_name, profile_picture_url, location_city, location_state,
+		        default_translation, filter_strongs, filter_footnotes, filter_scripref, filter_headings, 
+		        filter_redletters, filter_lemma, filter_morph, filter_xlit,
 		        password_hash, oauth_provider, oauth_id, created_at, updated_at 
 		 FROM users WHERE id = ?`,
 		id,
 	).Scan(&user.ID, &user.Email, &user.Username, &user.FirstName, &user.LastName, &user.ProfilePictureURL,
-		&user.LocationCity, &user.LocationState, &user.PasswordHash, &user.OAuthProvider,
+		&user.LocationCity, &user.LocationState, &user.DefaultTranslation,
+		&filterStrongs, &filterFootnotes, &filterScripref, &filterHeadings,
+		&filterRedLetters, &filterLemma, &filterMorph, &filterXlit,
+		&user.PasswordHash, &user.OAuthProvider,
 		&user.OAuthID, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
+	// Convert int to bool
+	user.FilterStrongs = filterStrongs == 1
+	user.FilterFootnotes = filterFootnotes == 1
+	user.FilterScripref = filterScripref == 1
+	user.FilterHeadings = filterHeadings == 1
+	user.FilterRedLetters = filterRedLetters == 1
+	user.FilterLemma = filterLemma == 1
+	user.FilterMorph = filterMorph == 1
+	user.FilterXlit = filterXlit == 1
 	return user, nil
 }
 
 // GetUserByEmail retrieves a user by email
 func (d *Database) GetUserByEmail(email string) (*User, error) {
 	user := &User{}
+	var filterStrongs, filterFootnotes, filterScripref, filterHeadings, filterRedLetters, filterLemma, filterMorph, filterXlit int
 	err := d.db.QueryRow(
 		`SELECT id, email, username, first_name, last_name, profile_picture_url, location_city, location_state,
+		        default_translation, filter_strongs, filter_footnotes, filter_scripref, filter_headings, 
+		        filter_redletters, filter_lemma, filter_morph, filter_xlit,
 		        password_hash, oauth_provider, oauth_id, created_at, updated_at 
 		 FROM users WHERE email = ?`,
 		email,
 	).Scan(&user.ID, &user.Email, &user.Username, &user.FirstName, &user.LastName, &user.ProfilePictureURL,
-		&user.LocationCity, &user.LocationState, &user.PasswordHash, &user.OAuthProvider,
+		&user.LocationCity, &user.LocationState, &user.DefaultTranslation,
+		&filterStrongs, &filterFootnotes, &filterScripref, &filterHeadings,
+		&filterRedLetters, &filterLemma, &filterMorph, &filterXlit,
+		&user.PasswordHash, &user.OAuthProvider,
 		&user.OAuthID, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
+	// Convert int to bool
+	user.FilterStrongs = filterStrongs == 1
+	user.FilterFootnotes = filterFootnotes == 1
+	user.FilterScripref = filterScripref == 1
+	user.FilterHeadings = filterHeadings == 1
+	user.FilterRedLetters = filterRedLetters == 1
+	user.FilterLemma = filterLemma == 1
+	user.FilterMorph = filterMorph == 1
+	user.FilterXlit = filterXlit == 1
 	return user, nil
 }
 
 // GetUserByUsername retrieves a user by username
 func (d *Database) GetUserByUsername(username string) (*User, error) {
 	user := &User{}
+	var filterStrongs, filterFootnotes, filterScripref, filterHeadings, filterRedLetters, filterLemma, filterMorph, filterXlit int
 	err := d.db.QueryRow(
 		`SELECT id, email, username, first_name, last_name, profile_picture_url, location_city, location_state,
+		        default_translation, filter_strongs, filter_footnotes, filter_scripref, filter_headings, 
+		        filter_redletters, filter_lemma, filter_morph, filter_xlit,
 		        password_hash, oauth_provider, oauth_id, created_at, updated_at 
 		 FROM users WHERE username = ?`,
 		username,
 	).Scan(&user.ID, &user.Email, &user.Username, &user.FirstName, &user.LastName, &user.ProfilePictureURL,
-		&user.LocationCity, &user.LocationState, &user.PasswordHash, &user.OAuthProvider,
+		&user.LocationCity, &user.LocationState, &user.DefaultTranslation,
+		&filterStrongs, &filterFootnotes, &filterScripref, &filterHeadings,
+		&filterRedLetters, &filterLemma, &filterMorph, &filterXlit,
+		&user.PasswordHash, &user.OAuthProvider,
 		&user.OAuthID, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
+	// Convert int to bool
+	user.FilterStrongs = filterStrongs == 1
+	user.FilterFootnotes = filterFootnotes == 1
+	user.FilterScripref = filterScripref == 1
+	user.FilterHeadings = filterHeadings == 1
+	user.FilterRedLetters = filterRedLetters == 1
+	user.FilterLemma = filterLemma == 1
+	user.FilterMorph = filterMorph == 1
+	user.FilterXlit = filterXlit == 1
 	return user, nil
 }
 
 // GetUserByOAuth retrieves a user by OAuth provider and ID
 func (d *Database) GetUserByOAuth(provider, oauthID string) (*User, error) {
 	user := &User{}
+	var filterStrongs, filterFootnotes, filterScripref, filterHeadings, filterRedLetters, filterLemma, filterMorph, filterXlit int
 	err := d.db.QueryRow(
 		`SELECT id, email, username, first_name, last_name, profile_picture_url, location_city, location_state,
+		        default_translation, filter_strongs, filter_footnotes, filter_scripref, filter_headings, 
+		        filter_redletters, filter_lemma, filter_morph, filter_xlit,
 		        password_hash, oauth_provider, oauth_id, created_at, updated_at 
 		 FROM users WHERE oauth_provider = ? AND oauth_id = ?`,
 		provider, oauthID,
 	).Scan(&user.ID, &user.Email, &user.Username, &user.FirstName, &user.LastName, &user.ProfilePictureURL,
-		&user.LocationCity, &user.LocationState, &user.PasswordHash, &user.OAuthProvider,
+		&user.LocationCity, &user.LocationState, &user.DefaultTranslation,
+		&filterStrongs, &filterFootnotes, &filterScripref, &filterHeadings,
+		&filterRedLetters, &filterLemma, &filterMorph, &filterXlit,
+		&user.PasswordHash, &user.OAuthProvider,
 		&user.OAuthID, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
+	// Convert int to bool
+	user.FilterStrongs = filterStrongs == 1
+	user.FilterFootnotes = filterFootnotes == 1
+	user.FilterScripref = filterScripref == 1
+	user.FilterHeadings = filterHeadings == 1
+	user.FilterRedLetters = filterRedLetters == 1
+	user.FilterLemma = filterLemma == 1
+	user.FilterMorph = filterMorph == 1
+	user.FilterXlit = filterXlit == 1
 	return user, nil
 }
 
@@ -451,6 +530,66 @@ func (d *Database) UpdateProfile(userID int64, firstName, lastName, profilePictu
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update profile: %w", err)
+	}
+	return nil
+}
+
+// UpdateDefaultTranslation updates a user's default Bible translation preference
+func (d *Database) UpdateDefaultTranslation(userID int64, translation string) error {
+	_, err := d.db.Exec(
+		`UPDATE users SET default_translation = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		translation, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update default translation: %w", err)
+	}
+	return nil
+}
+
+// UpdateFilters updates a user's OSIS filter preferences
+func (d *Database) UpdateFilters(userID int64, filters OSISFilters) error {
+	// Convert bool to int for SQLite
+	strongs := 0
+	if filters.ShowStrongs {
+		strongs = 1
+	}
+	footnotes := 0
+	if filters.ShowFootnotes {
+		footnotes = 1
+	}
+	scripref := 0
+	if filters.ShowScripref {
+		scripref = 1
+	}
+	headings := 0
+	if filters.ShowHeadings {
+		headings = 1
+	}
+	redletters := 0
+	if filters.ShowRedLetters {
+		redletters = 1
+	}
+	lemma := 0
+	if filters.ShowLemma {
+		lemma = 1
+	}
+	morph := 0
+	if filters.ShowMorph {
+		morph = 1
+	}
+	xlit := 0
+	if filters.ShowXlit {
+		xlit = 1
+	}
+
+	_, err := d.db.Exec(
+		`UPDATE users SET filter_strongs = ?, filter_footnotes = ?, filter_scripref = ?,
+		 filter_headings = ?, filter_redletters = ?, filter_lemma = ?, filter_morph = ?,
+		 filter_xlit = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		strongs, footnotes, scripref, headings, redletters, lemma, morph, xlit, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update filters: %w", err)
 	}
 	return nil
 }

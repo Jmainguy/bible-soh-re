@@ -37,6 +37,7 @@ type FTPConfig struct {
 	User      string `yaml:"user"`
 	Password  string `yaml:"password"`
 	Directory string `yaml:"directory"`
+	Conf      string `yaml:"conf"` // Path to .conf file on FTP server
 }
 
 // LoadConfig loads the configuration from a file or falls back to embedded config.yaml
@@ -85,6 +86,39 @@ func DownloadTranslation(tc TranslationConfig) error {
 	// Login
 	if err := conn.Login(tc.FTP.User, tc.FTP.Password); err != nil {
 		return fmt.Errorf("failed to login to FTP server: %w", err)
+	}
+
+	// Download .conf file if specified
+	if tc.FTP.Conf != "" {
+		log.Printf("Downloading conf file: %s", tc.FTP.Conf)
+		confName := filepath.Base(tc.FTP.Conf)
+		localConfPath := filepath.Join(localDir, confName)
+
+		resp, err := conn.Retr(tc.FTP.Conf)
+		if err != nil {
+			log.Printf("Warning: Failed to retrieve conf file %s: %v", tc.FTP.Conf, err)
+		} else {
+			confFile, err := os.Create(localConfPath)
+			if err != nil {
+				log.Printf("Warning: Failed to create conf file %s: %v", localConfPath, err)
+				if closeErr := resp.Close(); closeErr != nil {
+					log.Printf("Failed to close response: %v", closeErr)
+				}
+			} else {
+				_, copyErr := io.Copy(confFile, resp)
+				if closeErr := confFile.Close(); closeErr != nil {
+					log.Printf("Failed to close conf file: %v", closeErr)
+				}
+				if closeErr := resp.Close(); closeErr != nil {
+					log.Printf("Failed to close response: %v", closeErr)
+				}
+				if copyErr != nil {
+					log.Printf("Warning: Failed to copy conf file: %v", copyErr)
+				} else {
+					log.Printf("Successfully downloaded conf file: %s", confName)
+				}
+			}
+		}
 	}
 
 	// Change to the specified directory

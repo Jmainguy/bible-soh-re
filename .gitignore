@@ -5,3 +5,5 @@ bible-soh-re
 bible.db
 bible.db-shm
 bible.db-wal
+static/uploads/
+tmp

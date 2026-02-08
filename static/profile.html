@@ -127,6 +127,10 @@
                             <label class="block text-sm font-medium mb-1" style="color: #8b7355;">State</label>
                             <p id="viewState" class="text-lg font-semibold" style="color: #5d4e37;"></p>
                         </div>
+                        <div class="p-4 rounded-lg" style="background-color: #f5f1e8;">
+                            <label class="block text-sm font-medium mb-1" style="color: #8b7355;">Default Translation</label>
+                            <p id="viewTranslation" class="text-lg font-semibold" style="color: #5d4e37;"></p>
+                        </div>
                     </div>
                 </div>
 
@@ -181,6 +185,16 @@
                                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
                                        style="background-color: #fffef9;">
                             </div>
+                            <div>
+                                <label for="defaultTranslation" class="block text-sm font-medium mb-2" style="color: #5d4e37;">
+                                    Default Translation *
+                                </label>
+                                <select id="defaultTranslation" name="default_translation" required
+                                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                        style="background-color: #fffef9;">
+                                    <option value="">Loading translations...</option>
+                                </select>
+                            </div>
                         </div>
 
                         <div class="flex gap-3 mt-6">
@@ -199,6 +213,34 @@
 
     <script>
         let currentUser = null;
+        let translations = [];
+
+        // Load available translations
+        async function loadTranslations() {
+            try {
+                const response = await fetch('/api/translations');
+                if (!response.ok) throw new Error('Failed to load translations');
+                translations = await response.json();
+                populateTranslationSelect();
+            } catch (error) {
+                console.error('Error loading translations:', error);
+            }
+        }
+
+        // Populate translation select dropdown
+        function populateTranslationSelect() {
+            const select = document.getElementById('defaultTranslation');
+            if (!select || translations.length === 0) return;
+            
+            select.innerHTML = translations.map(t => 
+                `<option value="${t.name}">${t.full_name || t.name.toUpperCase()}</option>`
+            ).join('');
+            
+            // Set current value if user data is loaded
+            if (currentUser && currentUser.default_translation) {
+                select.value = currentUser.default_translation;
+            }
+        }
 
         // Check authentication
         async function checkAuth() {
@@ -254,12 +296,24 @@
             document.getElementById('viewLastName').textContent = currentUser.last_name || 'Not set';
             document.getElementById('viewCity').textContent = currentUser.location_city || 'Not set';
             document.getElementById('viewState').textContent = currentUser.location_state || 'Not set';
+            
+            // Display default translation
+            const translationName = currentUser.default_translation || 'nasb';
+            const translation = translations.find(t => t.name === translationName);
+            document.getElementById('viewTranslation').textContent = translation ? 
+                (translation.full_name || translationName.toUpperCase()) : translationName.toUpperCase();
 
             // Populate edit form
             document.getElementById('firstName').value = currentUser.first_name || '';
             document.getElementById('lastName').value = currentUser.last_name || '';
             document.getElementById('locationCity').value = currentUser.location_city || '';
             document.getElementById('locationState').value = currentUser.location_state || '';
+            
+            // Set default translation in dropdown
+            const select = document.getElementById('defaultTranslation');
+            if (select) {
+                select.value = currentUser.default_translation || 'nasb';
+            }
         }
 
         // Toggle edit mode
@@ -393,7 +447,11 @@
                 location_state: document.getElementById('locationState').value.trim()
             };
 
+            const newTranslation = document.getElementById('defaultTranslation').value;
+            const translationChanged = newTranslation !== currentUser.default_translation;
+
             try {
+                // Update profile
                 const response = await fetch('/api/profile/update', {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
@@ -403,6 +461,19 @@
                 if (!response.ok) throw new Error('Failed to update profile');
                 
                 currentUser = await response.json();
+                
+                // Update translation if changed
+                if (translationChanged) {
+                    const translationResponse = await fetch('/api/profile/translation', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ translation: newTranslation })
+                    });
+                    
+                    if (!translationResponse.ok) throw new Error('Failed to update translation');
+                    currentUser = await translationResponse.json();
+                }
+                
                 displayProfile();
                 
                 // Switch back to view mode
@@ -430,6 +501,7 @@
 
         // Initialize
         checkAuth();
+        loadTranslations();
         loadProfile();
     </script>
 </body>

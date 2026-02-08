@@ -293,6 +293,7 @@ type Translation struct {
 
 var translations map[string]*Translation
 var translationNames []string
+var authDB *Database // Global database reference for filter preferences
 var tagPattern = regexp.MustCompile(`<[^>]+>`)
 var sectionTitlePattern = regexp.MustCompile(`<title[^>]*(?:subType="x-preverse"|type="x-s")[^>]*>([^<]+)</title>`)
 var descriptionTitlePattern = regexp.MustCompile(`<title[^>]*type="x-description"[^>]*>([^<]+)</title>`)
@@ -718,7 +719,7 @@ func loadTranslation(name, path, fullName, description, testaments string) error
 	return nil
 }
 
-func getChapter(translation, bookName string, chapter int) ([]map[string]interface{}, error) {
+func getChapter(translation, bookName string, chapter int, filters OSISFilters, includeRaw bool) ([]map[string]interface{}, error) {
 	trans, ok := translations[translation]
 	if !ok {
 		return nil, fmt.Errorf("translation not found: %s", translation)
@@ -772,8 +773,42 @@ func getChapter(translation, bookName string, chapter int) ([]map[string]interfa
 		if err != nil {
 			rawText = ""
 		}
-		verseData := parseVerseData(rawText)
-		verseData["verse"] = v
+		// Use the new OSIS parser
+		parsedVerse := ParseOSISVerse(rawText, filters)
+
+		// Convert ParsedVerse to map for JSON compatibility
+		verseData := map[string]interface{}{
+			"verse": v,
+			"text":  parsedVerse.Text,
+		}
+
+		if includeRaw {
+			verseData["rawOSIS"] = parsedVerse.RawOSIS
+		}
+		// include debug passes when available
+		if parsedVerse.DebugPass1 != "" {
+			verseData["debugPass1"] = parsedVerse.DebugPass1
+		}
+		if parsedVerse.DebugPass2 != "" {
+			verseData["debugPass2"] = parsedVerse.DebugPass2
+		}
+
+		if parsedVerse.SectionTitle != "" {
+			verseData["sectionTitle"] = parsedVerse.SectionTitle
+		}
+		if len(parsedVerse.Footnotes) > 0 {
+			verseData["notes"] = parsedVerse.Footnotes
+		}
+		if len(parsedVerse.CrossRefs) > 0 {
+			verseData["crossReferences"] = parsedVerse.CrossRefs
+		}
+		if len(parsedVerse.StrongsNumbers) > 0 {
+			verseData["strongsNumbers"] = parsedVerse.StrongsNumbers
+		}
+		if parsedVerse.HasRedLetters {
+			verseData["hasRedLetters"] = true
+		}
+
 		verses[v-1] = verseData
 	}
 
@@ -860,7 +895,55 @@ func handleChapter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	verses, err := getChapter(translation, book, chapter)
+	// Parse filter preferences from query parameters
+	// If not specified in query, try to get from authenticated user's preferences
+	// Otherwise default to all enabled (true)
+	filters := OSISFilters{
+		ShowStrongs:    r.URL.Query().Get("showStrongs") != "false",
+		ShowFootnotes:  r.URL.Query().Get("showFootnotes") != "false",
+		ShowScripref:   r.URL.Query().Get("showScripref") != "false",
+		ShowHeadings:   r.URL.Query().Get("showHeadings") != "false",
+		ShowRedLetters: r.URL.Query().Get("showRedLetters") != "false",
+		ShowLemma:      r.URL.Query().Get("showLemma") != "false",
+		ShowMorph:      r.URL.Query().Get("showMorph") != "false",
+		ShowXlit:       r.URL.Query().Get("showXlit") != "false",
+	}
+
+	// If user is authenticated and no explicit filters in query, use their preferences
+	if cookie, err := r.Cookie("session"); err == nil {
+		if session, err := authDB.GetSession(cookie.Value); err == nil {
+			if user, err := authDB.GetUserByID(session.UserID); err == nil {
+				// Only use user preferences if no explicit filter params in URL
+				if r.URL.Query().Get("showStrongs") == "" {
+					filters.ShowStrongs = user.FilterStrongs
+				}
+				if r.URL.Query().Get("showFootnotes") == "" {
+					filters.ShowFootnotes = user.FilterFootnotes
+				}
+				if r.URL.Query().Get("showScripref") == "" {
+					filters.ShowScripref = user.FilterScripref
+				}
+				if r.URL.Query().Get("showHeadings") == "" {
+					filters.ShowHeadings = user.FilterHeadings
+				}
+				if r.URL.Query().Get("showRedLetters") == "" {
+					filters.ShowRedLetters = user.FilterRedLetters
+				}
+				if r.URL.Query().Get("showLemma") == "" {
+					filters.ShowLemma = user.FilterLemma
+				}
+				if r.URL.Query().Get("showMorph") == "" {
+					filters.ShowMorph = user.FilterMorph
+				}
+				if r.URL.Query().Get("showXlit") == "" {
+					filters.ShowXlit = user.FilterXlit
+				}
+			}
+		}
+	}
+
+	includeRaw := r.URL.Query().Get("rawOSIS") == "1"
+	verses, err := getChapter(translation, book, chapter, filters, includeRaw)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -913,6 +996,9 @@ func main() {
 			translationNames = append(translationNames, tc.Name)
 		}
 	}
+
+	// Strong's lexicon loading has been removed; do not load a hard-coded
+	// lexicon at startup. Lemma lookup will rely on embedded OSIS data only.
 
 	if len(translations) == 0 {
 		log.Fatal("No translations could be loaded")
@@ -994,6 +1080,9 @@ func main() {
 		}
 	}()
 
+	// Set global database reference for handleChapter filter preferences
+	authDB = db
+
 	// Initialize authentication handler
 	authHandler := NewAuthHandler(db, &config.Auth)
 
@@ -1015,6 +1104,9 @@ func main() {
 	http.HandleFunc("/api/profile", authHandler.handleGetProfile)
 	http.HandleFunc("/api/profile/update", authHandler.handleUpdateProfile)
 	http.HandleFunc("/api/profile/picture", authHandler.handleUploadProfilePicture)
+	http.HandleFunc("/api/profile/translation", authHandler.handleUpdateDefaultTranslation)
+	http.HandleFunc("/api/profile/filters", authHandler.handleUpdateFilters)
+	http.HandleFunc("/api/profile/filters/get", authHandler.handleGetFilters)
 
 	// User groups route (for dropdowns, etc.)
 	http.HandleFunc("/api/user/groups", authHandler.handleGetUserGroups)
@@ -1081,7 +1173,42 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	http.Handle("/", http.FileServer(http.FS(staticFS)))
+
+	// Custom handler for root path to support URL parameters for deep linking
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Only handle root path and index.html
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			// Check if there are URL parameters for deep linking
+			book := r.URL.Query().Get("book")
+			translation := r.URL.Query().Get("translation")
+
+			// If book is specified but translation is not, redirect with user's default translation
+			if book != "" && translation == "" {
+				// Try to get the current user's default translation
+				if cookie, err := r.Cookie("session_id"); err == nil {
+					if session, err := db.GetSession(cookie.Value); err == nil {
+						if user, err := db.GetUserByID(session.UserID); err == nil && user.DefaultTranslation != "" {
+							// Redirect to the same URL with the user's default translation
+							query := r.URL.Query()
+							query.Set("translation", user.DefaultTranslation)
+							r.URL.RawQuery = query.Encode()
+							http.Redirect(w, r, r.URL.String(), http.StatusFound)
+							return
+						}
+					}
+				}
+				// If not logged in or no default set, redirect with NASB as default
+				query := r.URL.Query()
+				query.Set("translation", "nasb")
+				r.URL.RawQuery = query.Encode()
+				http.Redirect(w, r, r.URL.String(), http.StatusFound)
+				return
+			}
+		}
+
+		// Serve static files normally
+		http.FileServer(http.FS(staticFS)).ServeHTTP(w, r)
+	})
 
 	// Start WebSocket hub
 	go hub.Run()

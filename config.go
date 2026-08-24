@@ -38,6 +38,14 @@ type FTPConfig struct {
 	Directory string `yaml:"directory"`
 }
 
+func translationsDir() string {
+	if dir := os.Getenv("TRANSLATIONS_DIR"); dir != "" {
+		return dir
+	}
+
+	return filepath.Join(os.TempDir(), "bible-soh-re", "translations")
+}
+
 // LoadConfig loads the configuration from a file or falls back to embedded config.yaml
 func LoadConfig(filename string) (*Config, error) {
 	var data []byte
@@ -64,7 +72,7 @@ func DownloadTranslation(tc TranslationConfig) error {
 	log.Printf("Downloading translation: %s from %s:%d", tc.Name, tc.FTP.Host, tc.FTP.Port)
 
 	// Create local directory
-	localDir := filepath.Join("translations", tc.Name)
+	localDir := filepath.Join(translationsDir(), tc.Name)
 	if err := os.MkdirAll(localDir, 0755); err != nil {
 		return fmt.Errorf("failed to create directory %s: %w", localDir, err)
 	}
@@ -158,7 +166,7 @@ func DownloadAllTranslations(config *Config) error {
 
 // TranslationExists checks if a translation directory exists and has required files
 func TranslationExists(name string) bool {
-	localDir := filepath.Join("translations", name)
+	localDir := filepath.Join(translationsDir(), name)
 
 	// Check if directory exists
 	info, err := os.Stat(localDir)

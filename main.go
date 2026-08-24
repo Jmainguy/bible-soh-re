@@ -905,7 +905,7 @@ func main() {
 
 	// Load translations from config
 	for _, tc := range config.Translations {
-		translationPath := filepath.Join("translations", tc.Name)
+		translationPath := filepath.Join(translationsDir(), tc.Name)
 		if err := loadTranslation(tc.Name, translationPath, tc.FullName, tc.Description, tc.Testaments); err != nil {
 			log.Printf("Warning: Could not load %s: %v", tc.Name, err)
 		} else {

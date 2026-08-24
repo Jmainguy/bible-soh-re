@@ -1,11 +1,10 @@
 version: 2
 env:
   - GO111MODULE=on
-before:
-  hooks:
-    - go mod tidy
 builds:
-- env:
+- id: bible-soh-re
+  binary: bible-soh-re
+  env:
   - CGO_ENABLED=0
   goos:
     - linux
@@ -38,12 +37,13 @@ kos:
     # Base image to publish to use.
     #
     # Default: 'cgr.dev/chainguard/static'.
-    base_image: chainguard/wolfi-base
+    base_image: cgr.dev/chainguard/static@sha256:f68e3a8244c7d0f4cd56635aaff8e6a533cf6cc3850d8fb339567a5782d6a0b0
 
     # Repository to push to.
     #
     # Default: '$KO_DOCKER_REPO'.
-    repository: "zot.soh.re"
+    repositories:
+      - zot.soh.re/jmainguy
 
     # Platforms to build and publish.
     #
@@ -81,7 +81,7 @@ kos:
 
     labels:
       org.opencontainers.image.created: "{{.Date}}"
-      org.opencontainers.image.title: "{{.ProjectName}}"
+      org.opencontainers.image.title: "Bible soh.re"
       org.opencontainers.image.revision: "{{.FullCommit}}"
       org.opencontainers.image.version: "{{.Version}}"
       org.opencontainers.image.authors: "Jonathan Seth Mainguy <jon@soh.re>"
@@ -89,7 +89,18 @@ kos:
       org.opencontainers.image.url: "https://github.com/Jmainguy/bible-soh-re"
       org.opencontainers.image.source: "https://github.com/Jmainguy/bible-soh-re"
       org.opencontainers.image.description: "A bible reading website"
-      org.opencontainers.image.licenses: "GPL-2.0"
+      org.opencontainers.image.licenses: "GPL-2.0-only"
+    annotations:
+      org.opencontainers.image.created: "{{.Date}}"
+      org.opencontainers.image.title: "Bible soh.re"
+      org.opencontainers.image.revision: "{{.FullCommit}}"
+      org.opencontainers.image.version: "{{.Version}}"
+      org.opencontainers.image.authors: "Jonathan Seth Mainguy <jon@soh.re>"
+      org.opencontainers.image.vendor: "Jmainguy"
+      org.opencontainers.image.url: "https://github.com/Jmainguy/bible-soh-re"
+      org.opencontainers.image.source: "https://github.com/Jmainguy/bible-soh-re"
+      org.opencontainers.image.description: "A bible reading website"
+      org.opencontainers.image.licenses: "GPL-2.0-only"
       
     # Bare uses a tag on the $KO_DOCKER_REPO without anything additional.
     bare: true

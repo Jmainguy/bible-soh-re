@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.7](https://github.com/Jmainguy/bible-soh-re/compare/v1.2.6...v1.2.7) (2026-08-24)
+
+
+### Bug Fixes
+
+* **storage:** write translations to a non-root data directory ([1474b6e](https://github.com/Jmainguy/bible-soh-re/commit/1474b6eb782a23839b468fa663c76ce487f1c473))
+
 ## [1.2.6](https://github.com/Jmainguy/bible-soh-re/compare/v1.2.5...v1.2.6) (2026-08-24)
 
 

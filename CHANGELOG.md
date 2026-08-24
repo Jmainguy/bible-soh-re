@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.6](https://github.com/Jmainguy/bible-soh-re/compare/v1.2.5...v1.2.6) (2026-08-24)
+
+
+### Bug Fixes
+
+* **ci:** permit vulnerability report uploads ([17423fe](https://github.com/Jmainguy/bible-soh-re/commit/17423fe4479a15ec0834ed183519fea40370d471))
+* **release:** update dependencies and secure image publishing ([9dcf204](https://github.com/Jmainguy/bible-soh-re/commit/9dcf204e018c582e005575dada577c339efa9ec3))
+
 ## [1.2.5](https://github.com/Jmainguy/bible-soh-re/compare/v1.2.4...v1.2.5) (2025-12-06)
 
 

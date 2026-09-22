@@ -4,9 +4,66 @@ let currentBook = null;
 let currentChapter = 1;
 let maxChapter = 1;
 let showReferences = false; // Toggle for showing/hiding references
+let showVerseComments = false; // Toggle for showing/hiding verse comments
+let selectedCommentGroup = null; // null for personal, groupID for group comments
+let userGroups = []; // Available study groups for the user
 let selectedTranslation = ''; // Currently selected translation
 let translationInfo = {}; // Translation metadata (fullName, description)
 let sidebarVisible = true; // Sidebar visibility state
+let currentUserId = null; // Current authenticated user ID
+let userDefaultTranslation = null; // User's default translation preference
+
+// OSIS Filter Preferences (defaults to all enabled)
+let osisFilters = {
+    showStrongs: false,
+    showFootnotes: true,
+    showScripref: true,
+    showHeadings: true,
+    showRedLetters: true,
+    showLemma: true,
+    showMorph: true,
+    showXlit: true
+};
+
+// Cache last loaded chapter verses so we can re-render client-side for instant toggles
+let lastLoadedVerses = null;
+
+// Verse comments / notes state (some pages may not include the notes UI)
+let notesVisible = false;
+let currentNoteType = 'personal';
+let notesPollingInterval = null;
+let currentNotesData = null;
+let openCommentsSections = new Set();
+let commentsData = new Map();
+let selectedGroupId = null;
+
+// Load UI preferences from localStorage
+function loadUIPreferences() {
+    try {
+        const prefs = localStorage.getItem('uiPreferences');
+        if (prefs) {
+            const parsed = JSON.parse(prefs);
+            showReferences = parsed.showReferences !== undefined ? parsed.showReferences : false;
+            showVerseComments = parsed.showVerseComments !== undefined ? parsed.showVerseComments : false;
+            selectedCommentGroup = parsed.selectedCommentGroup !== undefined ? parsed.selectedCommentGroup : null;
+        }
+    } catch (error) {
+        console.error('Failed to load UI preferences:', error);
+    }
+}
+
+// Save UI preferences to localStorage
+function saveUIPreferences() {
+    try {
+        localStorage.setItem('uiPreferences', JSON.stringify({
+            showReferences,
+            showVerseComments,
+            selectedCommentGroup
+        }));
+    } catch (error) {
+        console.error('Failed to save UI preferences:', error);
+    }
+}
 
 // DOM Elements
 const bookList = document.getElementById('bookList');
@@ -17,6 +74,8 @@ const nextChapterBtn = document.getElementById('nextChapter');
 const chapterSelector = document.getElementById('chapterSelector');
 const chapterSelect = document.getElementById('chapterSelect');
 const toggleReferencesBtn = document.getElementById('toggleReferences');
+const toggleVerseCommentsBtn = document.getElementById('toggleVerseComments');
+const verseCommentsGroupSelect = document.getElementById('verseCommentsGroupSelect');
 const translationSelect = document.getElementById('translationSelect');
 const toggleSidebarBtn = document.getElementById('toggleSidebar');
 const sidebar = document.getElementById('sidebar');
@@ -24,11 +83,22 @@ const sidebarIcon = document.getElementById('sidebarIcon');
 const contentWrapper = document.getElementById('contentWrapper');
 const sidebarOverlay = document.getElementById('sidebarOverlay');
 
+// Filter checkbox elements
+const filterStrongsCheckbox = document.getElementById('filterStrongs');
+const filterFootnotesCheckbox = document.getElementById('filterFootnotes');
+const filterScriprefCheckbox = document.getElementById('filterScripref');
+const filterHeadingsCheckbox = document.getElementById('filterHeadings');
+const filterRedLettersCheckbox = document.getElementById('filterRedLetters');
+const filterLemmaCheckbox = document.getElementById('filterLemma');
+const filterMorphCheckbox = document.getElementById('filterMorph');
+const filterXlitCheckbox = document.getElementById('filterXlit');
+
 // Update browser URL with current state
 function updateURL(verseNum = null) {
     if (!currentBook || !currentChapter || !selectedTranslation) return;
     
     const params = new URLSearchParams();
+    // Include translation in URL for display purposes
     params.set('translation', selectedTranslation);
     params.set('book', currentBook);
     params.set('chapter', currentChapter);
@@ -72,15 +142,17 @@ function scrollToVerse(verseNum) {
 
 // Initialize the application
 async function init() {
-    // Hide sidebar on mobile by default
-    if (window.innerWidth <= 1024) {
-        sidebar.classList.add('collapsed');
-        contentWrapper.classList.add('sidebar-collapsed');
-        toggleSidebarBtn.classList.add('sidebar-hidden');
-        sidebarIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>';
-        sidebarVisible = false;
-    }
+    // Check authentication status
+    await checkAuthStatus();
     
+    // Load UI preferences from localStorage
+    loadUIPreferences();
+    
+    // Connect to WebSocket for real-time updates
+    connectWebSocket();
+    
+    setSidebarVisible(window.innerWidth > 1024);
+
     await loadTranslations();
     
     // Check URL parameters first
@@ -90,10 +162,15 @@ async function init() {
     const chapterParam = urlParams.get('chapter');
     const verseParam = urlParams.get('verse');
     
-    // Set translation from URL if provided, otherwise default to NASB
+    // Set translation priority: URL param > user default > NASB
     if (translationParam && translationInfo[translationParam]) {
         selectedTranslation = translationParam;
         translationSelect.value = translationParam;
+        updateHeader();
+    } else if (userDefaultTranslation && translationInfo[userDefaultTranslation]) {
+        // Use user's default translation if logged in and no URL param
+        selectedTranslation = userDefaultTranslation;
+        translationSelect.value = userDefaultTranslation;
         updateHeader();
     } else if (translationInfo['nasb']) {
         selectedTranslation = 'nasb';
@@ -104,11 +181,13 @@ async function init() {
     await loadBooks();
     setupEventListeners();
     
-    if (bookParam && chapterParam) {
+    // Priority: URL params > saved position > default (Genesis 1)
+    if (bookParam) {
+        // URL parameters have highest priority
         const book = bibleBooks.find(b => b.name.toLowerCase() === bookParam.toLowerCase());
         if (book) {
             currentBook = book.name;
-            currentChapter = parseInt(chapterParam);
+            currentChapter = Math.min(book.chapterCount, Math.max(1, parseInt(chapterParam) || 1));
             maxChapter = book.chapterCount;
             
             updateChapterSelector();
@@ -119,19 +198,54 @@ async function init() {
             if (verseParam) {
                 setTimeout(() => scrollToVerse(verseParam), 300);
             }
+        } else {
+            await loadDefaultPosition();
         }
     } else {
-        // Load Genesis 1 by default if no URL params
-        const genesis = bibleBooks.find(b => b.name === 'Genesis');
-        if (genesis) {
-            currentBook = 'Genesis';
-            currentChapter = 1;
-            maxChapter = genesis.chapterCount;
-            
-            updateChapterSelector();
-            
-            await loadChapter();
+        // Try to load saved position
+        const savedPosition = await loadSavedPosition();
+        
+        if (savedPosition) {
+            // Use saved position for book and chapter
+            const book = bibleBooks.find(b => b.name === savedPosition.book);
+            if (book) {
+                currentBook = savedPosition.book;
+                currentChapter = savedPosition.chapter;
+                maxChapter = book.chapterCount;
+                
+                // Only use saved translation if no user default was set
+                if (!userDefaultTranslation && savedPosition.translation && translationInfo[savedPosition.translation]) {
+                    selectedTranslation = savedPosition.translation;
+                    translationSelect.value = savedPosition.translation;
+                    updateHeader();
+                }
+                
+                updateChapterSelector();
+                
+                await loadChapter();
+                console.log(`Restored reading position from ${savedPosition.source}: ${currentBook} ${currentChapter} (${selectedTranslation})`);
+            } else {
+                // Saved position is invalid, load default
+                loadDefaultPosition();
+            }
+        } else {
+            // No saved position, load default
+            loadDefaultPosition();
         }
+    }
+}
+
+// Load default position (Genesis 1)
+async function loadDefaultPosition() {
+    const genesis = bibleBooks.find(b => b.name === 'Genesis') || bibleBooks[0];
+    if (genesis) {
+        currentBook = genesis.name;
+        currentChapter = 1;
+        maxChapter = genesis.chapterCount;
+        
+        updateChapterSelector();
+        
+        await loadChapter();
     }
 }
 
@@ -139,7 +253,7 @@ async function init() {
 async function loadTranslations() {
     try {
         const response = await fetch('/api/translations');
-        const translations = await response.json();
+        const translations = await readAPIResponse(response);
         
         translationSelect.innerHTML = '';
         translations.forEach(trans => {
@@ -164,7 +278,7 @@ async function loadTranslations() {
 function updateHeader() {
     const info = translationInfo[selectedTranslation];
     if (info) {
-        document.getElementById('translationFullName').textContent = `Holy Bible - ${info.fullName}`;
+        document.getElementById('translationFullName').textContent = 'Holy Bible';
         document.getElementById('translationDescription').textContent = info.description;
     }
 }
@@ -174,7 +288,7 @@ async function loadBooks() {
     try {
         const url = `/api/books?translation=${selectedTranslation}`;
         const response = await fetch(url);
-        bibleBooks = await response.json();
+        bibleBooks = await readAPIResponse(response);
         renderBookList();
     } catch (error) {
         console.error('Error loading books:', error);
@@ -250,34 +364,66 @@ function selectBook(book) {
     loadChapter();
     updateURL();
     
-    // Auto-hide sidebar on mobile after selection
-    if (window.innerWidth <= 1024 && sidebarVisible) {
-        sidebar.classList.add('collapsed');
-        contentWrapper.classList.add('sidebar-collapsed');
-        toggleSidebarBtn.classList.add('sidebar-hidden');
-        sidebarOverlay.classList.remove('active');
-        sidebarIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>';
-        sidebarVisible = false;
-    }
+    if (window.innerWidth <= 1024) setSidebarVisible(false);
 }
 
+function setSidebarVisible(visible) {
+    sidebarVisible = visible;
+    sidebar.classList.toggle('collapsed', !visible);
+    sidebar.inert = !visible;
+    contentWrapper.classList.toggle('sidebar-collapsed', !visible);
+    toggleSidebarBtn.classList.toggle('sidebar-hidden', !visible);
+    toggleSidebarBtn.setAttribute('aria-expanded', String(visible));
+    const label = visible ? 'Hide navigation' : 'Show navigation';
+    toggleSidebarBtn.setAttribute('aria-label', label);
+    toggleSidebarBtn.title = label;
+    sidebarOverlay.classList.toggle('active', visible && window.innerWidth <= 1024);
+    sidebarIcon.innerHTML = visible
+        ? '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>'
+        : '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>';
+}
+
+// Read API failures before decoding a successful JSON response.
+async function readAPIResponse(response) {
+    if (!response.ok) {
+        const body = await response.text();
+        let message = body;
+        try { message = JSON.parse(body).error || body; } catch (_) {}
+        throw new Error(message || `Request failed (${response.status})`);
+    }
+    return response.json();
+}
+
+let chapterRequestID = 0;
 // Load and display a specific chapter
 async function loadChapter() {
     if (!currentBook) return;
-    
+    const requestID = ++chapterRequestID;
+    lastLoadedVerses = null;
     try {
         versesContainer.innerHTML = '<div class="text-center text-gray-500 py-8">Loading...</div>';
         
-        const url = `/api/chapter?book=${encodeURIComponent(currentBook)}&chapter=${currentChapter}&translation=${selectedTranslation}`;
+        // Build URL with filter parameters
+        let url = `/api/chapter?book=${encodeURIComponent(currentBook)}&chapter=${currentChapter}&translation=${selectedTranslation}`;
+        
+        // Explicit UI state avoids racing the asynchronous preference save.
+        for (const [key, value] of Object.entries(osisFilters)) {
+            url += `&${key}=${value}`;
+        }
+
         const response = await fetch(url);
-        const data = await response.json();
+        const data = await readAPIResponse(response);
+        if (requestID !== chapterRequestID) return;
+
+        // Cache verses for client-side re-rendering
+        lastLoadedVerses = data.verses || null;
         
         // Update title
         chapterTitle.textContent = `${data.book} ${data.chapter}`;
         chapterSelect.value = currentChapter;
         
         // Render verses
-        renderVerses(data.verses);
+        await renderVerses(data.verses);
         
         // Update navigation buttons - only disable at absolute boundaries
         const currentIndex = bibleBooks.findIndex(b => b.name === currentBook);
@@ -290,17 +436,24 @@ async function loadChapter() {
         // Update URL
         updateURL();
         
+        // Save reading position
+        saveReadingPosition();
+        
+        // Load notes for this chapter (if user is authenticated)
+        loadNotes();
+        
         // Scroll to top
         window.scrollTo({ top: 0, behavior: 'smooth' });
         
     } catch (error) {
+        if (requestID !== chapterRequestID) return;
         console.error('Error loading chapter:', error);
-        versesContainer.innerHTML = '<div class="text-red-500 text-center py-8">Error loading chapter</div>';
+        versesContainer.innerHTML = `<div class="text-red-500 text-center py-8">${escapeHtml(error.message)}</div>`;
     }
 }
 
 // Render verses in the container
-function renderVerses(verses) {
+async function renderVerses(verses) {
     versesContainer.innerHTML = '';
     
     if (!verses || verses.length === 0) {
@@ -335,6 +488,19 @@ function renderVerses(verses) {
     if (!showReferences) {
         container.classList.add('hide-references');
     }
+    if (!showVerseComments) {
+        container.classList.add('hide-verse-comments');
+    }
+    
+    // Load all verse comments if enabled
+    const verseCommentsMap = new Map();
+    if (showVerseComments && currentUserId) {
+        const commentPromises = verses.map(v => loadVerseComments(currentBook, currentChapter, v.verse));
+        const allComments = await Promise.all(commentPromises);
+        verses.forEach((v, idx) => {
+            verseCommentsMap.set(v.verse, allComments[idx] || []);
+        });
+    }
     
     verses.forEach((verseData) => {
         const verseNum = verseData.verse;
@@ -343,6 +509,7 @@ function renderVerses(verses) {
         const crossReferences = verseData.crossReferences || [];
         const notes = verseData.notes || [];
         const studyNotes = verseData.studyNotes || [];
+        const strongsNumbers = verseData.strongsNumbers || [];
         
         // Display section title if present
         if (sectionTitle) {
@@ -356,13 +523,28 @@ function renderVerses(verses) {
         verseDiv.className = 'verse';
         verseDiv.setAttribute('data-verse', verseNum);
         
-        // Create verse URL
-        const verseUrl = `${window.location.origin}/?translation=${selectedTranslation}&book=${encodeURIComponent(currentBook)}&chapter=${currentChapter}&verse=${verseNum}`;
+        // Create verse URL without translation parameter to use user's default
+        const verseUrl = `${window.location.origin}/?book=${encodeURIComponent(currentBook)}&chapter=${currentChapter}&verse=${verseNum}`;
         
         let html = `
             <a href="${verseUrl}" class="verse-number" title="Click to copy link, right-click to open in new tab">${verseNum}</a>
             <span class="verse-text">${formatVerseText(verseText, verseNum)}</span>
         `;
+        
+        // Add inline + button for verse comments if enabled and no comments exist
+        if (showVerseComments && verseCommentsMap.has(verseNum)) {
+            const comments = verseCommentsMap.get(verseNum);
+            const commentCount = countTotalComments(comments);
+            if (commentCount === 0) {
+                html += `<button class="verse-comment-add-btn" onclick="showAddCommentForm('${escapeHtml(currentBook)}', ${currentChapter}, ${verseNum})" 
+                        style="padding: 0.125rem 0.25rem; background-color: #9333ea; color: white; border-radius: 0.25rem; font-size: 0.7rem; cursor: pointer; border: none; margin-left: 0.25rem; vertical-align: middle;"
+                        title="Add a note to this verse">
+                    <svg style="width: 7px; height: 7px; display: inline;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M12 4v16m8-8H4"></path>
+                    </svg>
+                </button>`;
+            }
+        }
         
         // Add cross-references if they exist and should be shown
         if (crossReferences.length > 0 && showReferences) {
@@ -370,7 +552,7 @@ function renderVerses(verses) {
             html += '<span class="font-semibold">Cross-references: </span>';
             crossReferences.forEach((ref, refIdx) => {
                 const marker = ref.marker ? `[${ref.marker}] ` : '';
-                const refText = ref.text || ref; // Handle both old string format and new object format
+                const refText = normalizeReferenceInput(ref); // Handle both old string format and new object format
                 html += `<span class="reference">${marker}${createReferenceLink(refText)}</span>`;
                 if (refIdx < crossReferences.length - 1) {
                     html += '<span class="mx-1">;</span>';
@@ -383,7 +565,7 @@ function renderVerses(verses) {
         if (notes.length > 0 && showReferences) {
             notes.forEach(note => {
                 const marker = note.marker ? `[${note.marker}] ` : '';
-                const noteText = note.text || note; // Handle both old string format and new object format
+                const noteText = normalizeReferenceInput(note); // Handle both old string format and new object format
                 html += `<div class="verse-references">
                     <span class="font-semibold">${marker}</span>${createReferenceLink(noteText)}
                 </div>`;
@@ -394,13 +576,46 @@ function renderVerses(verses) {
         if (studyNotes.length > 0 && showReferences) {
             studyNotes.forEach(note => {
                 const marker = note.marker ? `[${note.marker}] ` : '';
-                const noteText = note.text || note; // Handle both old string format and new object format
+                const noteText = normalizeReferenceInput(note); // Handle both old string format and new object format
                 html += `<div class="verse-references">
                     <span class="font-semibold">Study note: ${marker}</span>${createReferenceLink(noteText)}
                 </div>`;
             });
         }
         
+        // Add verse comments if they exist and should be shown
+        if (showVerseComments && verseCommentsMap.has(verseNum)) {
+            const comments = verseCommentsMap.get(verseNum);
+            html += renderVerseCommentsSection(currentBook, currentChapter, verseNum, comments);
+        }
+
+        // Show lemma/xlit annotations when their filters are enabled
+        if (strongsNumbers.length > 0 && ((filterLemmaCheckbox && filterLemmaCheckbox.checked) || (filterXlitCheckbox && filterXlitCheckbox.checked) || (filterMorphCheckbox && filterMorphCheckbox.checked))) {
+            let annHtml = '<div class="word-annotations text-sm text-gray-600 mt-1">';
+            annHtml += strongsNumbers.map(s => {
+                const parts = [];
+                // Do not display lemma tokens that are actually Strong's IDs (e.g., "strong:G1234")
+                if (filterLemmaCheckbox && filterLemmaCheckbox.checked && s.lemma) {
+                    if (!/^strongs?:/i.test(s.lemma) && !/^strong:/i.test(s.lemma)) {
+                        // strip common prefixes like "BSBlex:" for display
+                        const lemmaDisplay = s.lemma.replace(/^lemma\.[^:]+:/, '').replace(/^BSBlex:/, '');
+                        parts.push(`<span class="lemma">Lemma: ${escapeHtml(lemmaDisplay)}</span>`);
+                    }
+                }
+                if (filterXlitCheckbox && filterXlitCheckbox.checked && s.xlit) {
+                    const xlitDisplay = s.xlit.replace(/^Latn:/, '');
+                    parts.push(`<span class="xlit">Xlit: ${escapeHtml(xlitDisplay)}</span>`);
+                }
+                if (filterMorphCheckbox && filterMorphCheckbox.checked && s.morph) {
+                    parts.push(`<span class="morph">Morphology: ${escapeHtml(s.morph)}</span>`);
+                }
+                if (parts.length === 0) return '';
+                return `<div class="annotation-item">${parts.join(' | ')} <span class="annotation-word text-gray-500">— ${escapeHtml(s.word)}</span></div>`;
+            }).filter(Boolean).join('');
+            annHtml += '</div>';
+            html += annHtml;
+        }
+
         verseDiv.innerHTML = html;
         container.appendChild(verseDiv);
     });
@@ -552,6 +767,16 @@ function createReferenceLink(refText) {
     return html || escapeHtml(refText);
 }
 
+// Normalize reference input (object or string) into a string suitable for createReferenceLink
+function normalizeReferenceInput(ref) {
+    if (!ref) return '';
+    if (typeof ref === 'string') return ref;
+    if (typeof ref.text === 'string' && ref.text.trim()) return ref.text;
+    if (Array.isArray(ref.references)) return ref.references.join('; ');
+    if (ref.reference && typeof ref.reference === 'string') return ref.reference;
+    return '';
+}
+
 // Helper function to create a single reference link
 function createSingleReferenceLink(bookAbbrev, chapter, verse, displayText) {
     const fullBookName = getFullBookName(bookAbbrev);
@@ -566,25 +791,20 @@ function createSingleReferenceLink(bookAbbrev, chapter, verse, displayText) {
     return `<a href="${refUrl}" target="_blank" class="reference-link" data-book="${escapeHtml(fullBookName)}" data-chapter="${chapter}" data-verse="${verse}">${escapeHtml(displayText)}</a>`;
 }
 
-// Format verse text - allows <i> and <sup> tags, escapes everything else
+// Preserve supported scripture markup while escaping text and rejecting unsafe attributes.
 function formatVerseText(text, verseNum) {
     if (!text) return '';
-    
-    // Split on <i>, </i>, <sup>, and </sup> tags
-    const parts = text.split(/(<\/?i>|<\/?sup>)/);
-    let html = '';
-    
-    for (let i = 0; i < parts.length; i++) {
-        const part = parts[i];
-        
-        if (part === '<i>' || part === '</i>' || part === '<sup>' || part === '</sup>') {
-            html += part;
-        } else if (part) {
-            html += escapeHtml(part);
-        }
-    }
-    
-    return html;
+    const allowedTags = /^(i|b|sup|span|small|strong|em|u|s|mark|sub|ruby|rt|rb|rp|br|w|div|p)$/i;
+    return text.split(/(<[^>]*>)/g).map(part => {
+        const tag = part.match(/^<(\/?)([a-z]+)(\s[^>]*)?>$/i);
+        if (!tag || !allowedTags.test(tag[2])) return escapeHtml(part);
+        const name = tag[2].toLowerCase();
+        if (tag[1]) return `</${name}>`;
+        // The renderer emits classes for footnotes, cross-references, and red letters.
+        // Do not pass through event handlers, styles, or other source attributes.
+        const className = (tag[3] || '').match(/(?:^|\s)class\s*=\s*["']([a-z0-9_ -]+)["']/i);
+        return `<${name}${className ? ` class="${className[1]}"` : ''}>`;
+    }).join('');
 }
 
 // Navigate to a specific book and chapter (and optionally verse or verse range)
@@ -626,13 +846,28 @@ function navigateToReference(bookName, chapter, verse = null) {
             }
         });
     }
+
+
 }
 
 // Escape HTML to prevent XSS
 function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
-    return div.innerHTML;
+    return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// Helper function to generate profile picture HTML
+function getProfilePictureHTML(user, size = 'w-8 h-8') {
+    if (user.profile_picture_url) {
+        return `<img src="${escapeHtml(user.profile_picture_url)}" class="${size} rounded-full object-cover flex-shrink-0" alt="Profile">`;
+    }
+    
+    const initials = user.first_name && user.last_name 
+        ? (user.first_name[0] + user.last_name[0]).toUpperCase() 
+        : user.username[0].toUpperCase();
+    
+    return `<div class="${size} rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">${initials}</div>`;
 }
 
 // Navigate to next book
@@ -682,6 +917,15 @@ function updateChapterSelector() {
 
 // Setup event listeners
 function setupEventListeners() {
+    // Filter checkboxes
+    if (filterStrongsCheckbox) filterStrongsCheckbox.addEventListener('change', handleFilterChange);
+    if (filterFootnotesCheckbox) filterFootnotesCheckbox.addEventListener('change', handleFilterChange);
+    if (filterScriprefCheckbox) filterScriprefCheckbox.addEventListener('change', handleFilterChange);
+    if (filterHeadingsCheckbox) filterHeadingsCheckbox.addEventListener('change', handleFilterChange);
+    if (filterRedLettersCheckbox) filterRedLettersCheckbox.addEventListener('change', handleFilterChange);
+    if (filterLemmaCheckbox) filterLemmaCheckbox.addEventListener('change', handleFilterChange);
+    if (filterMorphCheckbox) filterMorphCheckbox.addEventListener('change', handleFilterChange);
+    if (filterXlitCheckbox) filterXlitCheckbox.addEventListener('change', handleFilterChange);
     prevChapterBtn.addEventListener('click', () => {
         if (currentChapter > 1) {
             currentChapter--;
@@ -734,7 +978,7 @@ function setupEventListeners() {
     
     // Toggle references button
     if (toggleReferencesBtn) {
-        // Set initial button text based on default state
+        // Set initial button text based on restored state
         toggleReferencesBtn.innerHTML = showReferences 
             ? '<svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg> Hide References'
             : '<svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path></svg> Show References';
@@ -744,44 +988,55 @@ function setupEventListeners() {
             toggleReferencesBtn.innerHTML = showReferences 
                 ? '<svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg> Hide References'
                 : '<svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path></svg> Show References';
+            saveUIPreferences(); // Save preference
             loadChapter(); // Reload to apply change
         });
     }
     
-    // Toggle sidebar button
+    // Toggle verse comments button
+    if (toggleVerseCommentsBtn) {
+        // Set initial button text based on restored state
+        toggleVerseCommentsBtn.innerHTML = showVerseComments 
+            ? '<svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg> <span class="hidden sm:inline">Hide Notes</span>'
+            : '<svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg> <span class="hidden sm:inline">Show Notes</span>';
+        
+        toggleVerseCommentsBtn.addEventListener('click', () => {
+            showVerseComments = !showVerseComments;
+            toggleVerseCommentsBtn.innerHTML = showVerseComments 
+                ? '<svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg> <span class="hidden sm:inline">Hide Notes</span>'
+                : '<svg class="w-5 h-5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg> <span class="hidden sm:inline">Show Notes</span>';
+            saveUIPreferences(); // Save preference
+            loadChapter(); // Reload to apply change
+        });
+    }
+    
+    // Verse comments group selector
+    if (verseCommentsGroupSelect) {
+        // Restore selected group from preferences
+        if (selectedCommentGroup !== null) {
+            verseCommentsGroupSelect.value = selectedCommentGroup;
+        }
+        
+        verseCommentsGroupSelect.addEventListener('change', (e) => {
+            selectedCommentGroup = e.target.value ? parseInt(e.target.value) : null;
+            saveUIPreferences(); // Save preference
+            if (showVerseComments) {
+                loadChapter(); // Reload to load comments for selected group
+            }
+        });
+    }
+    
+    // The header control stays available when navigation is hidden.
     if (toggleSidebarBtn) {
-        toggleSidebarBtn.addEventListener('click', () => {
-            sidebarVisible = !sidebarVisible;
-            if (sidebarVisible) {
-                sidebar.classList.remove('collapsed');
-                contentWrapper.classList.remove('sidebar-collapsed');
-                toggleSidebarBtn.classList.remove('sidebar-hidden');
-                sidebarOverlay.classList.add('active');
-                sidebarIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>';
-            } else {
-                sidebar.classList.add('collapsed');
-                contentWrapper.classList.add('sidebar-collapsed');
-                toggleSidebarBtn.classList.add('sidebar-hidden');
-                sidebarOverlay.classList.remove('active');
-                sidebarIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>';
-            }
-        });
+        toggleSidebarBtn.addEventListener('click', () => setSidebarVisible(!sidebarVisible));
     }
-    
-    // Close sidebar when clicking overlay
     if (sidebarOverlay) {
-        sidebarOverlay.addEventListener('click', () => {
-            if (sidebarVisible && window.innerWidth <= 1024) {
-                sidebar.classList.add('collapsed');
-                contentWrapper.classList.add('sidebar-collapsed');
-                toggleSidebarBtn.classList.add('sidebar-hidden');
-                sidebarOverlay.classList.remove('active');
-                sidebarIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>';
-                sidebarVisible = false;
-            }
-        });
+        sidebarOverlay.addEventListener('click', () => setSidebarVisible(false));
     }
-    
+    window.addEventListener('resize', () => {
+        sidebarOverlay.classList.toggle('active', sidebarVisible && window.innerWidth <= 1024);
+    });
+
     // Handle reference link clicks with event delegation
     versesContainer.addEventListener('click', (e) => {
         if (e.target.classList.contains('reference-link')) {
@@ -886,6 +1141,1812 @@ function setupEventListeners() {
         touchEndY = e.changedTouches[0].screenY;
         handleSwipe();
     }, { passive: true });
+}
+
+// Save reading position to localStorage and server (if authenticated)
+function saveReadingPosition() {
+    if (!currentBook || !currentChapter || !selectedTranslation) return;
+    
+    const position = {
+        translation: selectedTranslation,
+        book: currentBook,
+        chapter: currentChapter
+    };
+    
+    // Save to localStorage for all users
+    try {
+        localStorage.setItem('bibleReadingPosition', JSON.stringify(position));
+    } catch (e) {
+        console.error('Failed to save to localStorage:', e);
+    }
+    
+    // Save to server for authenticated users
+    fetch('/api/save-reading-position', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(position)
+    }).catch(err => {
+        // Silently fail if user is not authenticated or server error
+        console.debug('Could not save to server:', err);
+    });
+}
+
+// Load saved reading position (returns position object or null)
+async function loadSavedPosition() {
+    try {
+        // First, try to get from server if authenticated
+        const response = await fetch('/api/reading-position');
+        const data = await response.json();
+        
+        if (data.authenticated && data.hasPosition) {
+            return {
+                translation: data.translation,
+                book: data.book,
+                chapter: data.chapter,
+                source: 'server'
+            };
+        }
+    } catch (err) {
+        console.debug('Could not load from server:', err);
+    }
+    
+    // Fall back to localStorage
+    try {
+        const saved = localStorage.getItem('bibleReadingPosition');
+        if (saved) {
+            const position = JSON.parse(saved);
+            return {
+                ...position,
+                source: 'localStorage'
+            };
+        }
+    } catch (e) {
+        console.error('Failed to load from localStorage:', e);
+    }
+    
+    return null;
+}
+
+// Check authentication status
+async function checkAuthStatus() {
+    try {
+        const response = await fetch('/api/user');
+        const data = await response.json();
+        
+        const userMenu = document.getElementById('userMenu');
+        const loginButton = document.getElementById('loginButton');
+        const userName = document.getElementById('userName');
+        const userEmail = document.getElementById('userEmail');
+        const userMenuButton = document.getElementById('userMenuButton');
+        const userDropdown = document.getElementById('userDropdown');
+        const communityMenu = document.getElementById('communityMenu');
+        const communityMenuButton = document.getElementById('communityMenuButton');
+        const communityDropdown = document.getElementById('communityDropdown');
+        
+        if (data.authenticated) {
+            // Show user menu and community menu, hide login button
+            userMenu.classList.remove('hidden');
+            communityMenu.classList.remove('hidden');
+            loginButton.classList.add('hidden');
+            
+            // Display first + last name instead of username
+            const displayName = data.first_name && data.last_name 
+                ? `${data.first_name} ${data.last_name}` 
+                : data.username;
+            userName.textContent = displayName;
+            userEmail.textContent = data.email;
+            currentUserId = data.id;
+            
+            // Store user's default translation
+            if (data.default_translation) {
+                userDefaultTranslation = data.default_translation;
+            }
+            
+            // Update profile picture in user menu
+            const userPicDiv = document.getElementById('userProfilePic');
+            if (userPicDiv) {
+                userPicDiv.innerHTML = getProfilePictureHTML(data, 'w-8 h-8');
+            }
+            
+            initializeChapterNotes();
+            // Load filter preferences
+            await loadFilterPreferences();
+            
+            // Load user groups for verse comments
+            await loadUserGroupsForComments();
+            
+            // Setup user dropdown toggle
+            userMenuButton.addEventListener('click', (e) => {
+                e.stopPropagation();
+                userDropdown.classList.toggle('hidden');
+                communityDropdown.classList.add('hidden'); // Close community dropdown
+            });
+            
+            // Setup community dropdown toggle
+            communityMenuButton.addEventListener('click', (e) => {
+                e.stopPropagation();
+                communityDropdown.classList.toggle('hidden');
+                userDropdown.classList.add('hidden'); // Close user dropdown
+            });
+            
+            // Close dropdowns when clicking outside
+            document.addEventListener('click', (e) => {
+                if (!userMenu.contains(e.target)) {
+                    userDropdown.classList.add('hidden');
+                }
+                if (!communityMenu.contains(e.target)) {
+                    communityDropdown.classList.add('hidden');
+                }
+            });
+            
+            // Load user groups for verse comments
+        } else {
+            // Show login button, hide user menu and community menu
+            userMenu.classList.add('hidden');
+            communityMenu.classList.add('hidden');
+            loginButton.classList.remove('hidden');
+        }
+    } catch (error) {
+        console.error('Failed to check auth status:', error);
+        // On error, show login button
+        document.getElementById('userMenu').classList.add('hidden');
+        document.getElementById('communityMenu').classList.add('hidden');
+        document.getElementById('loginButton').classList.remove('hidden');
+    }
+}
+
+// ============ VERSE COMMENTS (INLINE NOTES) ============
+
+// Load user groups for verse comments dropdown
+async function initializeChapterNotes() {
+    const createPersonalNoteBtn = document.getElementById('createPersonalNoteBtn');
+    const createGroupNoteBtn = document.getElementById('createGroupNoteBtn');
+    const groupNoteSelector = document.getElementById('groupNoteSelector');
+    const notesSection = document.getElementById('notesSection');
+    const toggleNotesBtn = document.getElementById('toggleNotesBtn');
+    const personalNotesTab = document.getElementById('personalNotesTab');
+    const groupNotesTab = document.getElementById('groupNotesTab');
+
+    // If the notes UI isn't present on this page, bail out gracefully
+    if (!notesSection || !toggleNotesBtn || !personalNotesTab || !groupNotesTab || !createPersonalNoteBtn || !createGroupNoteBtn || !groupNoteSelector) {
+        return;
+    }
+
+    // Show notes section and apply saved visibility state
+    notesSection.classList.remove('hidden');
+    toggleNotesBtn.textContent = notesVisible ? 'Hide Notes' : 'Show Notes';
+    
+    // Apply saved note type (personal vs group)
+    if (currentNoteType === 'group') {
+        groupNotesTab.classList.add('border-amber-600', 'text-amber-700');
+        groupNotesTab.classList.remove('border-transparent', 'text-gray-600');
+        personalNotesTab.classList.remove('border-amber-600', 'text-amber-700');
+        personalNotesTab.classList.add('border-transparent', 'text-gray-600');
+        document.getElementById('groupNotesView').classList.remove('hidden');
+        document.getElementById('personalNotesView').classList.add('hidden');
+    } else {
+        personalNotesTab.classList.add('border-amber-600', 'text-amber-700');
+        personalNotesTab.classList.remove('border-transparent', 'text-gray-600');
+        groupNotesTab.classList.remove('border-amber-600', 'text-amber-700');
+        groupNotesTab.classList.add('border-transparent', 'text-gray-600');
+        document.getElementById('personalNotesView').classList.remove('hidden');
+        document.getElementById('groupNotesView').classList.add('hidden');
+    }
+    
+    // Apply visibility state to views and enable/disable controls
+    if (notesVisible) {
+        if (currentNoteType === 'personal') {
+            document.getElementById('personalNotesView').classList.remove('hidden');
+            // Disable group selector when on personal tab
+            groupNoteSelector.disabled = true;
+        } else {
+            document.getElementById('groupNotesView').classList.remove('hidden');
+            // Enable group selector when on group tab
+            groupNoteSelector.disabled = false;
+            // Load groups when restoring group notes state
+            loadUserGroups();
+        }
+        // Enable tabs
+        personalNotesTab.disabled = false;
+        groupNotesTab.disabled = false;
+        personalNotesTab.classList.remove('opacity-50', 'cursor-not-allowed');
+        groupNotesTab.classList.remove('opacity-50', 'cursor-not-allowed');
+        startNotesPolling();
+    } else {
+        document.getElementById('personalNotesView').classList.add('hidden');
+        document.getElementById('groupNotesView').classList.add('hidden');
+        // Disable tabs
+        personalNotesTab.disabled = true;
+        groupNotesTab.disabled = true;
+        personalNotesTab.classList.add('opacity-50', 'cursor-not-allowed');
+        groupNotesTab.classList.add('opacity-50', 'cursor-not-allowed');
+        // Disable group selector
+        groupNoteSelector.disabled = true;
+    }
+    
+    // Toggle notes visibility
+    toggleNotesBtn.addEventListener('click', () => {
+        notesVisible = !notesVisible;
+        const personalNotesView = document.getElementById('personalNotesView');
+        const groupNotesView = document.getElementById('groupNotesView');
+        
+        if (notesVisible) {
+            if (currentNoteType === 'personal') {
+                personalNotesView.classList.remove('hidden');
+            } else {
+                groupNotesView.classList.remove('hidden');
+            }
+            toggleNotesBtn.textContent = 'Hide Notes';
+            // Enable tabs
+            personalNotesTab.disabled = false;
+            groupNotesTab.disabled = false;
+            personalNotesTab.classList.remove('opacity-50', 'cursor-not-allowed');
+            groupNotesTab.classList.remove('opacity-50', 'cursor-not-allowed');
+            // Enable group selector if on group tab
+            if (currentNoteType === 'group') {
+                groupNoteSelector.disabled = false;
+            }
+            if (currentBook && currentChapter) {
+                loadNotes();
+            }
+            startNotesPolling();
+        } else {
+            personalNotesView.classList.add('hidden');
+            groupNotesView.classList.add('hidden');
+            toggleNotesBtn.textContent = 'Show Notes';
+            // Disable tabs
+            personalNotesTab.disabled = true;
+            groupNotesTab.disabled = true;
+            personalNotesTab.classList.add('opacity-50', 'cursor-not-allowed');
+            groupNotesTab.classList.add('opacity-50', 'cursor-not-allowed');
+            // Disable group selector
+            groupNoteSelector.disabled = true;
+            stopNotesPolling();
+        }
+        saveUIPreferences(); // Save preference
+    });
+    
+    // Tab switching
+    personalNotesTab.addEventListener('click', () => {
+        if (personalNotesTab.disabled) return;
+        currentNoteType = 'personal';
+        personalNotesTab.classList.add('border-amber-600', 'text-amber-700');
+        personalNotesTab.classList.remove('border-transparent', 'text-gray-600');
+        groupNotesTab.classList.remove('border-amber-600', 'text-amber-700');
+        groupNotesTab.classList.add('border-transparent', 'text-gray-600');
+        document.getElementById('personalNotesView').classList.remove('hidden');
+        document.getElementById('groupNotesView').classList.add('hidden');
+        // Disable group selector when on personal tab
+        groupNoteSelector.disabled = true;
+        if (currentBook && currentChapter) loadPersonalNotes();
+        saveUIPreferences(); // Save preference
+        restartNotesPolling();
+    });
+    
+    groupNotesTab.addEventListener('click', () => {
+        if (groupNotesTab.disabled) return;
+        currentNoteType = 'group';
+        groupNotesTab.classList.add('border-amber-600', 'text-amber-700');
+        groupNotesTab.classList.remove('border-transparent', 'text-gray-600');
+        personalNotesTab.classList.remove('border-amber-600', 'text-amber-700');
+        personalNotesTab.classList.add('border-transparent', 'text-gray-600');
+        document.getElementById('groupNotesView').classList.remove('hidden');
+        document.getElementById('personalNotesView').classList.add('hidden');
+        // Enable group selector when on group tab
+        groupNoteSelector.disabled = false;
+        loadUserGroups();
+        saveUIPreferences(); // Save preference
+        restartNotesPolling();
+    });
+    
+    // Create personal note
+    createPersonalNoteBtn.addEventListener('click', () => {
+        showCreateNoteDialog('personal');
+    });
+    
+    // Create group note
+    createGroupNoteBtn.addEventListener('click', () => {
+        if (selectedGroupId) {
+            showCreateNoteDialog('group', selectedGroupId);
+        }
+    });
+    
+    // Group selector change
+    groupNoteSelector.addEventListener('change', (e) => {
+        selectedGroupId = e.target.value ? parseInt(e.target.value) : null;
+        createGroupNoteBtn.disabled = !selectedGroupId;
+        document.getElementById('groupNotesList').replaceChildren();
+        
+        // Save to unified preferences
+        saveUIPreferences();
+        
+        if (selectedGroupId && currentBook && currentChapter) {
+            loadGroupNotes(selectedGroupId);
+        }
+        restartNotesPolling();
+    });
+}
+
+// Start polling for notes updates
+function startNotesPolling() {
+    stopNotesPolling(); // Clear any existing interval
+    
+    // Start polling immediately and then every 2 seconds
+    pollNotesUpdates(); // First poll immediately
+    
+    notesPollingInterval = setInterval(() => {
+        if (notesVisible && currentBook && currentChapter) {
+            pollNotesUpdates();
+        }
+    }, 2000); // Poll every 2 seconds
+    
+    console.log('Started notes polling');
+}
+
+// Stop polling for notes updates
+function stopNotesPolling() {
+    if (notesPollingInterval) {
+        clearInterval(notesPollingInterval);
+        notesPollingInterval = null;
+        console.log('Stopped notes polling');
+    }
+}
+
+// Restart polling (when switching tabs or groups)
+function restartNotesPolling() {
+    if (notesVisible) {
+        startNotesPolling();
+    }
+}
+
+// Poll for notes updates
+function hasNoteDraft() {
+    return [...document.querySelectorAll('#notesSection textarea, #versesContainer textarea')].some(input => input.value.trim());
+}
+async function pollNotesUpdates() {
+    if (!currentBook || hasNoteDraft()) return;
+    try {
+        let response;
+        if (currentNoteType === 'personal') {
+            response = await fetch(`/api/notes/personal?book=${encodeURIComponent(currentBook)}&chapter=${currentChapter}`);
+        } else if (currentNoteType === 'group' && selectedGroupId) {
+            response = await fetch(`/api/notes/group?group_id=${selectedGroupId}&book=${encodeURIComponent(currentBook)}&chapter=${currentChapter}`);
+        } else {
+            return;
+        }
+        
+        if (!response.ok) return;
+        const notes = await response.json();
+        
+        // Compare with current notes to see if update is needed
+        const notesJson = JSON.stringify(notes);
+        if (notesJson !== currentNotesData && !hasNoteDraft()) {
+            currentNotesData = notesJson;
+            const containerId = currentNoteType === 'personal' ? 'personalNotesList' : 'groupNotesList';
+            displayNotes(notes, containerId, currentUserId);
+        }
+        
+        // Also poll open comments
+        await pollOpenComments();
+    } catch (error) {
+        console.debug('Polling error:', error);
+    }
+}
+
+// Poll for comments updates
+async function pollOpenComments() {
+    for (const noteId of openCommentsSections) {
+        try {
+            const response = await fetch(`/api/notes/${noteId}/comments`);
+            if (!response.ok) continue;
+            const comments = await response.json();
+            
+            const commentsJson = JSON.stringify(comments);
+            const cachedData = commentsData.get(noteId);
+            
+            if (commentsJson !== cachedData) {
+                commentsData.set(noteId, commentsJson);
+                renderNoteCommentsSection(noteId, comments, document.getElementById(`comments-section-${noteId}`));
+            }
+        } catch (error) {
+            console.debug('Error polling comments:', error);
+        }
+    }
+}
+
+// Load notes (called when chapter changes)
+async function loadNotes() {
+    if (!notesVisible) return;
+    
+    currentNotesData = null; // Reset cache when loading new chapter
+    openCommentsSections.clear(); // Clear open comments when changing chapters
+    commentsData.clear();
+    if (currentNoteType === 'personal') {
+        await loadPersonalNotes();
+    } else if (currentNoteType === 'group' && selectedGroupId) {
+        await loadGroupNotes(selectedGroupId);
+    }
+    restartNotesPolling();
+}
+
+// Load personal notes
+async function loadPersonalNotes() {
+    if (!currentBook || !currentChapter) return;
+    
+    try {
+        const response = await fetch(`/api/notes/personal?book=${encodeURIComponent(currentBook)}&chapter=${currentChapter}`);
+        if (!response.ok) throw new Error('Failed to load notes');
+        const notes = await response.json();
+        currentNotesData = JSON.stringify(notes);
+        displayNotes(notes, 'personalNotesList', currentUserId);
+    } catch (error) {
+        console.error('Error loading personal notes:', error);
+    }
+}
+
+// Load group notes
+async function loadGroupNotes(groupId) {
+    if (!currentBook || !currentChapter) return;
+    
+    try {
+        const response = await fetch(`/api/notes/group?group_id=${groupId}&book=${encodeURIComponent(currentBook)}&chapter=${currentChapter}`);
+        if (!response.ok) throw new Error('Failed to load notes');
+        const notes = await response.json();
+        currentNotesData = JSON.stringify(notes);
+        displayNotes(notes, 'groupNotesList', currentUserId);
+    } catch (error) {
+        console.error('Error loading group notes:', error);
+    }
+}
+
+// Load user's groups for the dropdown
+async function loadUserGroups() {
+    try {
+        const response = await fetch('/api/groups/list');
+        if (!response.ok) throw new Error('Failed to load groups');
+        userGroups = await response.json() || [];
+        const createGroupNoteBtn = document.getElementById('createGroupNoteBtn');
+        createGroupNoteBtn.disabled = !selectedGroupId;
+        
+        const selector = document.getElementById('groupNoteSelector');
+        selector.innerHTML = '<option value="">Select a study group...</option>' +
+            userGroups.map(g => `<option value="${g.id}">${escapeHtml(g.name)}</option>`).join('');
+        
+        // Restore selected group from unified preferences
+        if (selectedGroupId && userGroups.some(g => g.id === selectedGroupId)) {
+            selector.value = selectedGroupId.toString();
+            createGroupNoteBtn.disabled = false;
+            if (currentBook && currentChapter) {
+                loadGroupNotes(selectedGroupId);
+            }
+        }
+    } catch (error) {
+        console.error('Error loading groups:', error);
+    }
+}
+
+// Display notes in the list
+function displayNotes(notes, containerId, currentUserId) {
+    const container = document.getElementById(containerId);
+    
+    if (!notes || notes.length === 0) {
+        container.innerHTML = '<p class="text-gray-500 text-sm italic">No notes yet for this chapter.</p>';
+        return;
+    }
+    
+    container.innerHTML = notes.map(note => {
+        // Check if current user owns this note
+        const canEdit = currentUserId && note.user_id === currentUserId;
+        // Check if note is temporary (not yet saved to server)
+        const isTemp = String(note.id).startsWith('temp-');
+        // Escape content for use in onclick attribute - replace backticks and backslashes
+        const escapedContent = escapeHtml(note.content).replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$\{/g, '\\${');
+        
+        return `
+        <div class="bg-white rounded-lg p-4 shadow-sm border border-gray-200 ${isTemp ? 'opacity-70' : ''}" id="note-${note.id}">
+            <div class="flex items-start justify-between mb-2">
+                <div class="flex items-start gap-2 flex-1">
+                    ${getProfilePictureHTML(note, 'w-8 h-8')}
+                    <div class="flex-1 min-w-0">
+                        <p class="text-sm font-medium text-gray-700">
+                            ${note.first_name && note.last_name ? escapeHtml(`${note.first_name} ${note.last_name}`) : escapeHtml(note.username)}
+                            ${isTemp ? '<span class="ml-2 text-xs text-amber-600">⏳ Saving...</span>' : ''}
+                        </p>
+                        <p class="text-xs text-gray-500">${new Date(note.created_at).toLocaleString()}</p>
+                    </div>
+                </div>
+                ${canEdit && !isTemp ? `
+                    <div class="flex gap-2">
+                        <button onclick="editNote('${note.id}', \`${escapedContent}\`)"
+                                class="text-blue-600 hover:text-blue-800 text-xs">Edit</button>
+                        <button onclick="deleteNote('${note.id}')"
+                                class="text-red-600 hover:text-red-800 text-xs">Delete</button>
+                    </div>
+                ` : ''}
+            </div>
+            <p class="text-gray-800 whitespace-pre-wrap">${escapeHtml(note.content)}</p>
+            <div id="reactions-note-${note.id}" class="flex flex-wrap gap-1 items-center mt-2">
+                ${isTemp ? '' : '<span class="text-xs text-gray-400">Loading reactions...</span>'}
+            </div>
+            <div class="mt-3 pt-3 border-t border-gray-100" id="comments-section-${note.id}">
+                <!-- Comments will be loaded here automatically -->
+            </div>
+        </div>
+        `;
+    }).join('');
+    
+    // Load reactions for each note after rendering
+    if (notes && notes.length > 0) {
+        setTimeout(() => {
+            notes.forEach(note => {
+                if (!String(note.id).startsWith('temp-')) {
+                    loadReactions('note', note.id);
+                    // Load comments automatically for each note
+                    loadNoteCommentsInline(note.id);
+                }
+            });
+        }, 0);
+    }
+}
+
+// Modal helper functions
+function showNoteEditor(title, initialContent, onSave) {
+    const modal = document.getElementById('noteEditorModal');
+    const titleEl = document.getElementById('noteEditorTitle');
+    const contentEl = document.getElementById('noteEditorContent');
+    const saveBtn = document.getElementById('noteEditorSave');
+    const cancelBtn = document.getElementById('noteEditorCancel');
+    
+    titleEl.textContent = title;
+    contentEl.value = initialContent || '';
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    contentEl.focus();
+    
+    const handleSave = async () => {
+        const content = contentEl.value.trim();
+        if (!content) { contentEl.focus(); return; }
+        saveBtn.disabled = true;
+        try { if (await onSave(content) !== false) closeNoteEditor(); }
+        finally { saveBtn.disabled = false; }
+    };
+    
+    const handleCancel = () => {
+        closeNoteEditor();
+    };
+    
+    const closeNoteEditor = () => {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        saveBtn.removeEventListener('click', handleSave);
+        cancelBtn.removeEventListener('click', handleCancel);
+    };
+    
+    saveBtn.addEventListener('click', handleSave);
+    cancelBtn.addEventListener('click', handleCancel);
+}
+
+function showDeleteConfirm(onConfirm) {
+    const modal = document.getElementById('deleteConfirmModal');
+    const yesBtn = document.getElementById('deleteConfirmYes');
+    const noBtn = document.getElementById('deleteConfirmNo');
+    
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    
+    const handleYes = () => {
+        onConfirm();
+        closeDeleteConfirm();
+    };
+    
+    const handleNo = () => {
+        closeDeleteConfirm();
+    };
+    
+    const closeDeleteConfirm = () => {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        yesBtn.removeEventListener('click', handleYes);
+        noBtn.removeEventListener('click', handleNo);
+    };
+    
+    yesBtn.addEventListener('click', handleYes);
+    noBtn.addEventListener('click', handleNo);
+}
+
+function showNoteMessage(title, message) {
+    const modal = document.getElementById('noteMessageModal');
+    const titleEl = document.getElementById('noteMessageTitle');
+    const messageEl = document.getElementById('noteMessageText');
+    const okBtn = document.getElementById('noteMessageOk');
+    
+    titleEl.textContent = title;
+    messageEl.textContent = message;
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    
+    const handleOk = () => {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        okBtn.removeEventListener('click', handleOk);
+    };
+    
+    okBtn.addEventListener('click', handleOk);
+}
+
+// Show create note dialog
+function showCreateNoteDialog(type, groupId = null) {
+    showNoteEditor('Create Note', '', (content) => {
+        return createNote(content, type, groupId);
+    });
+}
+
+// Create a note
+async function createNote(content, type, groupId = null) {
+    if (!currentBook || !currentChapter) return;
+    
+    // Optimistic update - add note to UI immediately
+    const optimisticNote = {
+        id: 'temp-' + Date.now(),
+        user_id: currentUserId,
+        username: document.getElementById('userName').textContent,
+        content: content,
+        created_at: new Date().toISOString(),
+        book: currentBook,
+        chapter: currentChapter,
+        group_id: groupId
+    };
+    
+    addNoteToUI(optimisticNote);
+    
+    try {
+        const response = await fetch('/api/notes/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                book: currentBook,
+                chapter: currentChapter,
+                content: content,
+                group_id: groupId
+            })
+        });
+        
+        if (!response.ok) {
+            const errorText = await response.text();
+            removeNoteFromUI(optimisticNote.id);
+            throw new Error(errorText || 'Failed to create note');
+        }
+        
+        // Get the real note from server response
+        const realNote = await response.json();
+        
+        // Replace temp note with real note in UI
+        replaceNoteInUI(optimisticNote.id, realNote);
+        
+        // Update cache to include the new note
+        currentNotesData = null;
+    } catch (error) {
+        console.error('Error creating note:', error);
+        removeNoteFromUI(optimisticNote.id);
+        showNoteMessage('Error', 'Failed to create note: ' + error.message);
+        return false;
+    }
+}
+
+// Edit a note
+async function editNote(noteId, currentContent) {
+    // Prevent editing temporary notes
+    if (String(noteId).startsWith('temp-')) {
+        showNoteMessage('Please Wait', 'This note is still being saved. Please wait a moment and try again.');
+        return;
+    }
+    
+    showNoteEditor('Edit Note', currentContent, async (content) => {
+        if (content === currentContent) return;
+        
+        // Optimistic update - update UI immediately
+        updateNoteContentInUI(noteId, content);
+        
+        try {
+            const response = await fetch(`/api/notes/${noteId}/update`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: content })
+            });
+            
+            if (!response.ok) {
+                // Revert on error
+                updateNoteContentInUI(noteId, currentContent);
+                throw new Error('Failed to update note');
+            }
+            
+            // Force refresh to get updated timestamp
+            currentNotesData = null;
+        } catch (error) {
+            console.error('Error updating note:', error);
+            showNoteMessage('Error', 'Failed to update note');
+            return false;
+        }
+    });
+}
+
+// Delete a note
+async function deleteNote(noteId) {
+    // Prevent deleting temporary notes
+    if (String(noteId).startsWith('temp-')) {
+        showNoteMessage('Please Wait', 'This note is still being saved. Please wait a moment and try again.');
+        return;
+    }
+    
+    showDeleteConfirm(async () => {
+        // Optimistic update - remove from UI immediately
+        removeNoteFromUI(noteId);
+        
+        try {
+            const response = await fetch(`/api/notes/${noteId}/delete`, { method: 'DELETE' });
+            if (!response.ok) {
+                // On error, force reload to restore
+                currentNotesData = null;
+                await loadNotes();
+                throw new Error('Failed to delete note');
+            }
+            
+            // Update cache
+            currentNotesData = null;
+        } catch (error) {
+            console.error('Error deleting note:', error);
+            showNoteMessage('Error', 'Failed to delete note');
+        }
+    });
+}
+
+// These old functions have been replaced by the threaded comment system below
+// (loadNoteCommentsInline, renderNoteCommentsSection, renderNoteComment, etc.)
+
+// Optimistic UI update helpers
+function addNoteToUI(note) {
+    const containerId = currentNoteType === 'personal' ? 'personalNotesList' : 'groupNotesList';
+    const container = document.getElementById(containerId);
+    
+    const canEdit = currentUserId && note.user_id === currentUserId;
+    // Check if note is temporary (not yet saved to server)
+    const isTemp = String(note.id).startsWith('temp-');
+    // Escape content for use in onclick attribute - replace backticks and backslashes
+    const escapedContent = escapeHtml(note.content).replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$\{/g, '\\${');
+    
+    const noteDiv = document.createElement('div');
+    noteDiv.className = `bg-white rounded-lg p-4 shadow-sm border border-gray-200 ${isTemp ? 'opacity-70' : ''}`;
+    noteDiv.id = `note-${note.id}`;
+    noteDiv.innerHTML = `
+        <div class="flex items-start justify-between mb-2">
+            <div class="flex items-start gap-2 flex-1">
+                ${getProfilePictureHTML(note, 'w-8 h-8')}
+                <div class="flex-1 min-w-0">
+                    <p class="text-sm font-medium text-gray-700">
+                        ${note.first_name && note.last_name ? escapeHtml(`${note.first_name} ${note.last_name}`) : escapeHtml(note.username)}
+                        ${isTemp ? '<span class="ml-2 text-xs text-amber-600">⏳ Saving...</span>' : ''}
+                    </p>
+                    <p class="text-xs text-gray-500">${new Date(note.created_at).toLocaleString()}</p>
+                </div>
+            </div>
+            ${canEdit && !isTemp ? `
+                <div class="flex gap-2">
+                    <button onclick="editNote('${note.id}', \`${escapedContent}\`)"
+                            class="text-blue-600 hover:text-blue-800 text-xs">Edit</button>
+                    <button onclick="deleteNote('${note.id}')"
+                            class="text-red-600 hover:text-red-800 text-xs">Delete</button>
+                </div>
+            ` : ''}
+        </div>
+        <p class="text-gray-800 whitespace-pre-wrap">${escapeHtml(note.content)}</p>
+        ${isTemp ? '' : `<div class="mt-3 pt-3 border-t border-gray-100" id="comments-section-${note.id}">
+            <!-- Comments will be loaded here automatically -->
+        </div>`}
+    `;
+    
+    // Add to top of list
+    if (container.firstChild && container.firstChild.className !== 'text-gray-500') {
+        container.insertBefore(noteDiv, container.firstChild);
+    } else {
+        // Replace "no notes" message if it exists
+        container.innerHTML = '';
+        container.appendChild(noteDiv);
+    }
+    
+    // Load comments inline for non-temp notes
+    if (!isTemp) {
+        setTimeout(() => {
+            loadReactions('note', note.id);
+            loadNoteCommentsInline(note.id);
+        }, 0);
+    }
+}
+
+function removeNoteFromUI(noteId) {
+    const noteElement = document.getElementById(`note-${noteId}`);
+    if (noteElement) {
+        noteElement.remove();
+        
+        // Check if container is now empty
+        const containerId = currentNoteType === 'personal' ? 'personalNotesList' : 'groupNotesList';
+        const container = document.getElementById(containerId);
+        if (container.children.length === 0) {
+            container.innerHTML = '<p class="text-gray-500 text-sm italic">No notes yet for this chapter.</p>';
+        }
+    }
+}
+
+function replaceNoteInUI(tempId, realNote) {
+    const tempElement = document.getElementById(`note-${tempId}`);
+    if (!tempElement) return;
+    
+    const canEdit = currentUserId && realNote.user_id === currentUserId;
+    const escapedContent = escapeHtml(realNote.content).replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$\{/g, '\\${');
+    
+    // Create the replacement note element
+    const noteDiv = document.createElement('div');
+    noteDiv.className = 'bg-white rounded-lg p-4 shadow-sm border border-gray-200';
+    noteDiv.id = `note-${realNote.id}`;
+    noteDiv.innerHTML = `
+        <div class="flex items-start justify-between mb-2">
+            <div class="flex items-start gap-2 flex-1">
+                ${getProfilePictureHTML(realNote, 'w-8 h-8')}
+                <div class="flex-1 min-w-0">
+                    <p class="text-sm font-medium text-gray-700">${realNote.first_name && realNote.last_name ? escapeHtml(`${realNote.first_name} ${realNote.last_name}`) : escapeHtml(realNote.username)}</p>
+                    <p class="text-xs text-gray-500">${new Date(realNote.created_at).toLocaleString()}</p>
+                </div>
+            </div>
+            ${canEdit ? `
+                <div class="flex gap-2">
+                    <button onclick="editNote('${realNote.id}', \`${escapedContent}\`)"
+                            class="text-blue-600 hover:text-blue-800 text-xs">Edit</button>
+                    <button onclick="deleteNote('${realNote.id}')"
+                            class="text-red-600 hover:text-red-800 text-xs">Delete</button>
+                </div>
+            ` : ''}
+        </div>
+        <p class="text-gray-800 whitespace-pre-wrap">${escapeHtml(realNote.content)}</p>
+        <div class="mt-3 pt-3 border-t border-gray-100" id="comments-section-${realNote.id}">
+            <!-- Comments will be loaded here automatically -->
+        </div>
+    `;
+    
+    // Replace the temp element with the real one
+    tempElement.replaceWith(noteDiv);
+    
+    // Load comments inline for the real note
+    setTimeout(() => {
+        loadReactions('note', realNote.id);
+        loadNoteCommentsInline(realNote.id);
+    }, 0);
+}
+
+function updateNoteContentInUI(noteId, newContent) {
+    const noteElement = document.getElementById(`note-${noteId}`);
+    if (noteElement) {
+        const contentP = noteElement.querySelector('.whitespace-pre-wrap');
+        if (contentP) {
+            contentP.textContent = newContent;
+        }
+        
+        // Update the edit button's onclick to use new content
+        const editBtn = noteElement.querySelector('button[onclick*="editNote"]');
+        if (editBtn) {
+            const escapedContent = escapeHtml(newContent).replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$\{/g, '\\${');
+            editBtn.setAttribute('onclick', `editNote('${noteId}', \`${escapedContent}\`)`);
+        }
+    }
+}
+
+// Load OSIS filter preferences from backend
+async function loadFilterPreferences() {
+    try {
+        const response = await fetch('/api/profile/filters/get');
+        if (response.ok) {
+            const data = await response.json();
+            if (data.filters) {
+                // Update state
+                osisFilters.showStrongs = data.filters.ShowStrongs;
+                osisFilters.showFootnotes = data.filters.ShowFootnotes;
+                osisFilters.showScripref = data.filters.ShowScripref;
+                osisFilters.showHeadings = data.filters.ShowHeadings;
+                osisFilters.showRedLetters = data.filters.ShowRedLetters;
+                osisFilters.showLemma = data.filters.ShowLemma;
+                osisFilters.showMorph = data.filters.ShowMorph;
+                osisFilters.showXlit = data.filters.ShowXlit;
+                
+                // Update UI
+                if (filterStrongsCheckbox) filterStrongsCheckbox.checked = osisFilters.showStrongs;
+                if (filterFootnotesCheckbox) filterFootnotesCheckbox.checked = osisFilters.showFootnotes;
+                if (filterScriprefCheckbox) filterScriprefCheckbox.checked = osisFilters.showScripref;
+                if (filterHeadingsCheckbox) filterHeadingsCheckbox.checked = osisFilters.showHeadings;
+                if (filterRedLettersCheckbox) filterRedLettersCheckbox.checked = osisFilters.showRedLetters;
+                if (filterLemmaCheckbox) filterLemmaCheckbox.checked = osisFilters.showLemma;
+                if (filterMorphCheckbox) filterMorphCheckbox.checked = osisFilters.showMorph;
+                if (filterXlitCheckbox) filterXlitCheckbox.checked = osisFilters.showXlit;
+                
+                console.log('Loaded filter preferences from server');
+            }
+        }
+    } catch (error) {
+        console.error('Failed to load filter preferences:', error);
+    }
+}
+
+// Save OSIS filter preferences to backend
+async function saveFilterPreferences() {
+    try {
+        const response = await fetch('/api/profile/filters', {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                ShowStrongs: osisFilters.showStrongs,
+                ShowFootnotes: osisFilters.showFootnotes,
+                ShowScripref: osisFilters.showScripref,
+                ShowHeadings: osisFilters.showHeadings,
+                ShowRedLetters: osisFilters.showRedLetters,
+                ShowLemma: osisFilters.showLemma,
+                ShowMorph: osisFilters.showMorph,
+                ShowXlit: osisFilters.showXlit
+            })
+        });
+        
+        if (response.ok) {
+            console.log('Saved filter preferences to server');
+        } else {
+            console.error('Failed to save filter preferences');
+        }
+    } catch (error) {
+        console.error('Error saving filter preferences:', error);
+    }
+}
+
+// Handle filter checkbox changes
+function handleFilterChange() {
+    const controls = {
+        showStrongs: filterStrongsCheckbox, showFootnotes: filterFootnotesCheckbox,
+        showScripref: filterScriprefCheckbox, showHeadings: filterHeadingsCheckbox,
+        showRedLetters: filterRedLettersCheckbox, showLemma: filterLemmaCheckbox,
+        showMorph: filterMorphCheckbox, showXlit: filterXlitCheckbox
+    };
+    for (const [key, control] of Object.entries(controls)) {
+        if (control) osisFilters[key] = control.checked;
+    }
+    if (currentUserId) saveFilterPreferences();
+    loadChapter();
+}
+
+// Load user groups for verse comments dropdown
+async function loadNoteCommentsInline(noteId) {
+    const section = document.getElementById(`comments-section-${noteId}`);
+    if (!section) return;
+    
+    try {
+        const response = await fetch(`/api/notes/${noteId}/comments`);
+        if (!response.ok) throw new Error('Failed to load comments');
+        const comments = await response.json();
+        
+        renderNoteCommentsSection(noteId, comments, section);
+    } catch (error) {
+        console.error('Error loading note comments:', error);
+        section.innerHTML = '<p class="text-xs text-red-500">Failed to load comments</p>';
+    }
+}
+
+// Render note comments section with threading
+function renderNoteCommentsSection(noteId, comments, section) {
+    // Handle null or undefined comments
+    const safeComments = comments || [];
+    const commentCount = countNoteComments(safeComments);
+    
+    section.innerHTML = `
+        <div class="space-y-2">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <strong style="color: #7c3aed; font-size: 0.875rem;">${commentCount} ${commentCount === 1 ? 'Comment' : 'Comments'}</strong>
+                <button onclick="showAddNoteCommentForm(${noteId})" 
+                        class="text-xs text-purple-600 hover:text-purple-800 font-semibold">
+                    + Add Comment
+                </button>
+            </div>
+            <div id="add-note-comment-form-${noteId}"></div>
+            <div class="space-y-2">
+                ${safeComments.length > 0 ? safeComments.map(comment => renderNoteComment(comment, noteId, 0)).join('') : '<p class="text-xs text-gray-500 italic">No comments yet.</p>'}
+            </div>
+        </div>
+    `;
+    
+    // Load reactions for all comments after rendering
+    if (safeComments.length > 0) {
+        setTimeout(() => {
+            loadNoteCommentReactionsRecursive(safeComments);
+        }, 0);
+    }
+}
+
+// Render a single note comment and its replies
+function renderNoteComment(comment, noteId, depth = 0) {
+    const indent = depth > 0 ? 'ml-6 border-l-2 border-purple-200 pl-3' : '';
+    const canEdit = currentUserId && comment.user_id === currentUserId;
+    // Store unescaped content in data attribute for editing
+    const contentForEdit = comment.content.replace(/"/g, '&quot;');
+    
+    return `
+        <div class="bg-gray-50 rounded p-2 ${indent}">
+            <div class="flex items-start gap-2">
+                ${getProfilePictureHTML(comment, 'w-6 h-6')}
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-baseline justify-between">
+                        <span class="font-medium text-xs text-gray-700">${comment.first_name && comment.last_name ? escapeHtml(`${comment.first_name} ${comment.last_name}`) : escapeHtml(comment.username)}</span>
+                        <span class="text-xs text-gray-500">${formatDate(comment.created_at)}</span>
+                    </div>
+                    <p class="text-gray-800 text-xs mt-1">${escapeHtml(comment.content)}</p>
+                    <div class="flex gap-3 mt-1">
+                        <a class="text-xs text-purple-600 hover:text-purple-800 cursor-pointer" onclick="showReplyToNoteCommentForm(${comment.id}, ${noteId})">Reply</a>
+                        ${canEdit ? `
+                            <a class="text-xs text-blue-600 hover:text-blue-800 cursor-pointer" onclick="editNoteComment(${comment.id}, ${noteId}, \`${contentForEdit}\`)">Edit</a>
+                            <a class="text-xs text-red-600 hover:text-red-800 cursor-pointer" onclick="deleteNoteComment(${comment.id}, ${noteId})">Delete</a>
+                        ` : ''}
+                    </div>
+                    <div id="reply-note-comment-form-${comment.id}"></div>
+                    <div id="reactions-note_comment-${comment.id}" class="flex flex-wrap gap-1 items-center mt-2">
+                        <span class="text-xs text-gray-400">Loading reactions...</span>
+                    </div>
+                </div>
+            </div>
+            ${comment.replies && comment.replies.length > 0 ? '<div class="mt-2 space-y-2">' + comment.replies.map(reply => renderNoteComment(reply, noteId, depth + 1)).join('') + '</div>' : ''}
+        </div>
+    `;
+}
+
+// Count total note comments including replies
+function countNoteComments(comments) {
+    if (!comments || !Array.isArray(comments)) {
+        return 0;
+    }
+    return comments.reduce((total, comment) => {
+        return total + 1 + (comment.replies ? countNoteComments(comment.replies) : 0);
+    }, 0);
+}
+
+// Load reactions recursively for note comments and their replies
+function loadNoteCommentReactionsRecursive(comments) {
+    if (!comments || !Array.isArray(comments)) return;
+    
+    comments.forEach(comment => {
+        loadReactions('note_comment', comment.id);
+        if (comment.replies && comment.replies.length > 0) {
+            loadNoteCommentReactionsRecursive(comment.replies);
+        }
+    });
+}
+
+// Show form to add a comment to a note
+window.showAddNoteCommentForm = function(noteId) {
+    const formContainer = document.getElementById(`add-note-comment-form-${noteId}`);
+    if (!formContainer) return;
+    
+    formContainer.innerHTML = `
+        <div class="bg-white rounded p-2 border border-purple-300">
+            <textarea id="new-note-comment-${noteId}" rows="2" placeholder="Add a comment..." 
+                      class="w-full text-xs border border-gray-300 rounded p-2"></textarea>
+            <div class="flex gap-2 mt-2">
+                <button onclick="submitNoteComment(${noteId})" 
+                        class="text-xs px-3 py-1 bg-purple-600 text-white rounded hover:bg-purple-700">Post</button>
+                <button onclick="cancelNoteCommentForm(${noteId})" 
+                        class="text-xs px-3 py-1 bg-gray-300 text-gray-700 rounded hover:bg-gray-400">Cancel</button>
+            </div>
+        </div>
+    `;
+    document.getElementById(`new-note-comment-${noteId}`).focus();
+};
+
+// Show form to reply to a comment
+window.showReplyToNoteCommentForm = function(parentId, noteId) {
+    const formContainer = document.getElementById(`reply-note-comment-form-${parentId}`);
+    if (!formContainer) return;
+    
+    formContainer.innerHTML = `
+        <div class="bg-white rounded p-2 border border-purple-300 mt-2">
+            <textarea id="reply-note-comment-${parentId}" rows="2" placeholder="Write a reply..." 
+                      class="w-full text-xs border border-gray-300 rounded p-2"></textarea>
+            <div class="flex gap-2 mt-2">
+                <button onclick="submitNoteCommentReply(${parentId}, ${noteId})" 
+                        class="text-xs px-3 py-1 bg-purple-600 text-white rounded hover:bg-purple-700">Reply</button>
+                <button onclick="cancelReplyNoteCommentForm(${parentId})" 
+                        class="text-xs px-3 py-1 bg-gray-300 text-gray-700 rounded hover:bg-gray-400">Cancel</button>
+            </div>
+        </div>
+    `;
+    document.getElementById(`reply-note-comment-${parentId}`).focus();
+};
+
+// Submit a new note comment
+window.submitNoteComment = async function(noteId) {
+    const textarea = document.getElementById(`new-note-comment-${noteId}`);
+    const content = textarea.value.trim();
+    
+    if (!content) return;
+    
+    try {
+        const response = await fetch('/api/comments/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                noteId: noteId,
+                content: content
+            })
+        });
+        
+        if (!response.ok) throw new Error('Failed to create comment');
+        
+        // Reload comments to show the new one
+        await loadNoteCommentsInline(noteId);
+    } catch (error) {
+        console.error('Error creating comment:', error);
+        showNoteMessage('Error', 'Failed to create comment');
+    }
+};
+
+// Submit a reply to a note comment
+window.submitNoteCommentReply = async function(parentId, noteId) {
+    const textarea = document.getElementById(`reply-note-comment-${parentId}`);
+    const content = textarea.value.trim();
+    
+    if (!content) return;
+    
+    try {
+        const response = await fetch('/api/comments/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                noteId: noteId,
+                parentId: parentId,
+                content: content
+            })
+        });
+        
+        if (!response.ok) throw new Error('Failed to create reply');
+        
+        // Reload comments to show the new reply
+        await loadNoteCommentsInline(noteId);
+    } catch (error) {
+        console.error('Error creating reply:', error);
+        showNoteMessage('Error', 'Failed to create reply');
+    }
+};
+
+// Cancel adding a comment
+window.cancelNoteCommentForm = function(noteId) {
+    const formContainer = document.getElementById(`add-note-comment-form-${noteId}`);
+    if (formContainer) formContainer.innerHTML = '';
+};
+
+// Cancel replying to a comment
+window.cancelReplyNoteCommentForm = function(parentId) {
+    const formContainer = document.getElementById(`reply-note-comment-form-${parentId}`);
+    if (formContainer) formContainer.innerHTML = '';
+};
+
+// Edit a note comment
+window.editNoteComment = async function(commentId, noteId, currentContent) {
+    showNoteEditor('Edit Comment', currentContent, async (newContent) => {
+        if (!newContent || newContent === currentContent) return;
+        
+        try {
+            const response = await fetch(`/api/comments/${commentId}/update`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: newContent })
+            });
+            
+            if (!response.ok) throw new Error('Failed to update comment');
+            
+            await loadNoteCommentsInline(noteId);
+        } catch (error) {
+            console.error('Error updating comment:', error);
+            showNoteMessage('Error', 'Failed to update comment');
+        }
+    });
+};
+
+// Delete a note comment
+window.deleteNoteComment = async function(commentId, noteId) {
+    showDeleteConfirm(async () => {
+        try {
+            const response = await fetch(`/api/comments/delete?commentId=${commentId}`, {
+                method: 'DELETE'
+            });
+            
+            if (!response.ok) throw new Error('Failed to delete comment');
+            
+            await loadNoteCommentsInline(noteId);
+        } catch (error) {
+            console.error('Error deleting comment:', error);
+            showNoteMessage('Error', 'Failed to delete comment');
+        }
+    });
+};
+
+// Reactions functionality
+const COMMON_EMOJIS = ['👍', '❤️', '🙏', '😊', '🎉', '👏'];
+
+// Load and display reactions for a target
+async function loadReactions(targetType, targetId) {
+    const container = document.getElementById(`reactions-${targetType}-${targetId}`);
+    if (!container) return;
+
+    try {
+        const response = await fetch(`/api/reactions/summary?target_type=${targetType}&target_id=${targetId}`);
+        if (!response.ok) throw new Error('Failed to load reactions');
+        
+        const reactions = await response.json() || [];
+        renderReactions(targetType, targetId, reactions);
+    } catch (error) {
+        console.error('Error loading reactions:', error);
+        container.innerHTML = '';
+    }
+}
+
+// Render reactions display
+function renderReactions(targetType, targetId, reactions) {
+    const container = document.getElementById(`reactions-${targetType}-${targetId}`);
+    if (!container) return;
+
+    let html = '';
+    
+    // Display existing reactions
+    if (reactions && reactions.length > 0) {
+        reactions.forEach(r => {
+            const buttonClass = r.has_reacted 
+                ? 'bg-blue-100 border-blue-400 text-blue-800' 
+                : 'bg-gray-100 border-gray-300 text-gray-700 hover:bg-gray-200';
+            
+            html += `
+                <button onclick="toggleReaction('${targetType}', ${targetId}, '${r.emoji}')" 
+                        class="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs border transition ${buttonClass}"
+                        title="${r.count} ${r.count === 1 ? 'person' : 'people'}">
+                    <span>${r.emoji}</span>
+                    <span class="font-medium">${r.count}</span>
+                </button>
+            `;
+        });
+    }
+    
+    // Add reaction button
+    html += `
+        <button onclick="showReactionPicker('${targetType}', ${targetId}, event)" 
+                class="inline-flex items-center px-2 py-1 rounded-full text-xs border border-gray-300 bg-white hover:bg-gray-100 transition"
+                title="Add reaction">
+            <span>😊➕</span>
+        </button>
+    `;
+    
+    container.innerHTML = html;
+}
+
+// Toggle a reaction
+async function toggleReaction(targetType, targetId, emoji) {
+    try {
+        const response = await fetch('/api/reactions/toggle', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                target_type: targetType,
+                target_id: targetId,
+                emoji: emoji
+            })
+        });
+
+        if (!response.ok) throw new Error('Failed to toggle reaction');
+        
+        const reactions = await response.json();
+        renderReactions(targetType, targetId, reactions);
+    } catch (error) {
+        console.error('Error toggling reaction:', error);
+    }
+}
+
+// Show reaction picker
+function showReactionPicker(targetType, targetId, event) {
+    event.stopPropagation();
+    
+    // Remove any existing picker
+    const existingPicker = document.querySelector('.reaction-picker');
+    if (existingPicker) existingPicker.remove();
+    
+    // Create picker
+    const picker = document.createElement('div');
+    picker.className = 'reaction-picker absolute z-50 bg-white rounded-lg shadow-xl p-2 flex gap-1 border border-gray-200';
+    picker.style.cssText = 'margin-top: -40px;';
+    
+    COMMON_EMOJIS.forEach(emoji => {
+        const btn = document.createElement('button');
+        btn.textContent = emoji;
+        btn.className = 'text-2xl hover:scale-125 transition p-1 rounded hover:bg-gray-100';
+        btn.onclick = async () => {
+            await toggleReaction(targetType, targetId, emoji);
+            picker.remove();
+        };
+        picker.appendChild(btn);
+    });
+    
+    // Position and show picker
+    const button = event.target.closest('button');
+    button.parentElement.style.position = 'relative';
+    button.parentElement.appendChild(picker);
+    
+    // Close picker on outside click
+    setTimeout(() => {
+        document.addEventListener('click', function closePicker(e) {
+            if (!picker.contains(e.target)) {
+                picker.remove();
+                document.removeEventListener('click', closePicker);
+            }
+        });
+    }, 0);
+}
+
+// ============ VERSE COMMENTS FUNCTIONALITY ============
+
+// Load user groups for verse comments dropdown
+async function loadUserGroupsForComments() {
+    try {
+        const response = await fetch('/api/user/groups');
+        if (!response.ok) return;
+        
+        const groups = await response.json();
+        userGroups = groups || [];
+        
+        // Populate the group selector
+        if (verseCommentsGroupSelect) {
+            verseCommentsGroupSelect.innerHTML = '<option value="">Personal Notes</option>';
+            userGroups.forEach(group => {
+                const option = document.createElement('option');
+                option.value = group.id;
+                option.textContent = group.name;
+                verseCommentsGroupSelect.appendChild(option);
+            });
+            
+            // Show verse comments controls if user is authenticated
+            if (userGroups.length >= 0) {
+                toggleVerseCommentsBtn.classList.remove('hidden');
+                verseCommentsGroupSelect.classList.remove('hidden');
+            }
+        }
+    } catch (error) {
+        console.error('Failed to load groups for comments:', error);
+    }
+}
+
+// Load comments for a specific verse
+async function loadVerseComments(book, chapter, verse) {
+    if (!currentUserId) return [];
+    
+    try {
+        const params = new URLSearchParams({
+            book,
+            chapter,
+            verse
+        });
+        
+        if (selectedCommentGroup) {
+            params.append('group_id', selectedCommentGroup);
+        }
+        
+        const response = await fetch(`/api/verse-comments/list?${params}`);
+        if (!response.ok) return [];
+        
+        const comments = await response.json();
+        return comments || [];
+    } catch (error) {
+        console.error('Failed to load verse comments:', error);
+        return [];
+    }
+}
+
+// Render a single comment and its replies
+function renderComment(comment, depth = 0) {
+    const indent = depth > 0 ? 'verse-comment-reply' : '';
+    return `
+        <div class="verse-comment ${indent}">
+            <div class="flex items-start gap-2">
+                ${getProfilePictureHTML(comment, 'w-6 h-6')}
+                <div class="flex-1 min-w-0">
+                    <div class="verse-comment-header">
+                        <strong>${escapeHtml(comment.first_name)} ${escapeHtml(comment.last_name)}</strong>
+                        <span class="text-gray-500">·</span>
+                        <span class="text-gray-500">${formatDate(comment.created_at)}</span>
+                    </div>
+                    <div class="verse-comment-content">${escapeHtml(comment.content)}</div>
+                    <div class="verse-comment-actions">
+                        <a class="verse-comment-action" onclick="showReplyForm(${comment.id}, '${escapeHtml(currentBook)}', ${currentChapter}, ${comment.verse})">Reply</a>
+                        ${comment.user_id === currentUserId ? `
+                            <a class="verse-comment-action" onclick="editVerseComment(${comment.id}, ${JSON.stringify(escapeHtml(comment.content)).replace(/"/g, '&quot;')})">Edit</a>
+                            <a class="verse-comment-action text-red-600" onclick="deleteVerseComment(${comment.id})">Delete</a>
+                        ` : ''}
+                    </div>
+                    <div id="reactions-verse_comment-${comment.id}" class="flex flex-wrap gap-1 items-center mt-2">
+                        <span class="text-xs text-gray-400">Loading reactions...</span>
+                    </div>
+                    <div id="reply-form-${comment.id}"></div>
+                </div>
+            </div>
+            ${comment.replies && comment.replies.length > 0 ? comment.replies.map(reply => renderComment(reply, depth + 1)).join('') : ''}
+        </div>
+    `;
+}
+
+// Render verse comments section
+function renderVerseCommentsSection(book, chapter, verse, comments) {
+    const commentCount = countTotalComments(comments);
+    
+    let contentHTML = '';
+    
+    // If no comments, show empty state
+    if (commentCount === 0) {
+        contentHTML = '<div id="add-comment-form-' + verse + '"></div>';
+    } else {
+        // If comments exist, show full section
+        contentHTML = `
+            <div class="verse-comments">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                    <strong style="color: #7c3aed;">${commentCount} ${commentCount === 1 ? 'Note' : 'Notes'}</strong>
+                    <button onclick="showAddCommentForm('${escapeHtml(book)}', ${chapter}, ${verse})" 
+                            style="padding: 0.25rem 0.5rem; background-color: #9333ea; color: white; border-radius: 0.25rem; font-size: 0.75rem; cursor: pointer; border: none;">
+                        + Add Note
+                    </button>
+                </div>
+                <div id="add-comment-form-${verse}"></div>
+                ${comments.map(comment => renderComment(comment, 0)).join('')}
+            </div>
+        `;
+        
+        // Load reactions for all verse comments after rendering
+        setTimeout(() => {
+            loadVerseCommentReactionsRecursive(comments);
+        }, 0);
+    }
+    
+    return `<div id="verse-comments-section-${verse}">${contentHTML}</div>`;
+}
+
+// Count total comments including replies
+function countTotalComments(comments) {
+    if (!comments || !Array.isArray(comments)) {
+        return 0;
+    }
+    return comments.reduce((total, comment) => {
+        return total + 1 + (comment.replies ? countTotalComments(comment.replies) : 0);
+    }, 0);
+}
+
+// Load reactions recursively for verse comments and their replies
+function loadVerseCommentReactionsRecursive(comments) {
+    if (!comments || !Array.isArray(comments)) return;
+    
+    comments.forEach(comment => {
+        loadReactions('verse_comment', comment.id);
+        if (comment.replies && comment.replies.length > 0) {
+            loadVerseCommentReactionsRecursive(comment.replies);
+        }
+    });
+}
+
+// Show form to add a new comment
+window.showAddCommentForm = function(book, chapter, verse) {
+    const formContainer = document.getElementById(`add-comment-form-${verse}`);
+    if (!formContainer) return;
+    
+    formContainer.innerHTML = `
+        <div class="verse-comment-form">
+            <textarea id="new-comment-${verse}" rows="3" placeholder="Add your note..."></textarea>
+            <div style="display: flex; gap: 0.5rem;">
+                <button onclick="submitVerseComment('${book}', ${chapter}, ${verse})">Post</button>
+                <button onclick="cancelCommentForm(${verse})" style="background-color: #6b7280;">Cancel</button>
+            </div>
+        </div>
+    `;
+    document.getElementById(`new-comment-${verse}`).focus();
+};
+
+// Show form to reply to a comment
+window.showReplyForm = function(parentId, book, chapter, verse) {
+    const formContainer = document.getElementById(`reply-form-${parentId}`);
+    if (!formContainer) return;
+    
+    formContainer.innerHTML = `
+        <div class="verse-comment-form" style="margin-top: 0.5rem;">
+            <textarea id="reply-${parentId}" rows="2" placeholder="Write a reply..."></textarea>
+            <div style="display: flex; gap: 0.5rem;">
+                <button onclick="submitReply(${parentId}, '${book}', ${chapter}, ${verse})">Reply</button>
+                <button onclick="cancelReplyForm(${parentId})" style="background-color: #6b7280;">Cancel</button>
+            </div>
+        </div>
+    `;
+    document.getElementById(`reply-${parentId}`).focus();
+};
+
+// Submit a new verse comment
+window.submitVerseComment = async function(book, chapter, verse) {
+    const textarea = document.getElementById(`new-comment-${verse}`);
+    if (!textarea) return;
+    
+    const content = textarea.value.trim();
+    if (!content) return;
+    
+    try {
+        const response = await fetch('/api/verse-comments/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                book,
+                chapter,
+                verse,
+                content,
+                group_id: selectedCommentGroup || null
+            })
+        });
+        
+        if (response.ok) {
+            await reloadVerseComments(book, chapter, verse); // Reload just this verse's comments
+        } else {
+            showNoteMessage('Error', 'Failed to add note');
+        }
+    } catch (error) {
+        console.error('Failed to submit comment:', error);
+        showNoteMessage('Error', 'Failed to add note');
+    }
+};
+
+// Submit a reply to a comment
+window.submitReply = async function(parentId, book, chapter, verse) {
+    const textarea = document.getElementById(`reply-${parentId}`);
+    if (!textarea) return;
+    
+    const content = textarea.value.trim();
+    if (!content) return;
+    
+    try {
+        const response = await fetch('/api/verse-comments/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                book,
+                chapter,
+                verse,
+                content,
+                parent_id: parentId,
+                group_id: selectedCommentGroup || null
+            })
+        });
+        
+        if (response.ok) {
+            await reloadVerseComments(book, chapter, verse); // Reload just this verse's comments
+        } else {
+            showNoteMessage('Error', 'Failed to add reply');
+        }
+    } catch (error) {
+        console.error('Failed to submit reply:', error);
+        showNoteMessage('Error', 'Failed to add reply');
+    }
+};
+
+// Cancel comment form
+window.cancelCommentForm = function(verse) {
+    const formContainer = document.getElementById(`add-comment-form-${verse}`);
+    if (formContainer) formContainer.innerHTML = '';
+};
+
+// Cancel reply form
+window.cancelReplyForm = function(parentId) {
+    const formContainer = document.getElementById(`reply-form-${parentId}`);
+    if (formContainer) formContainer.innerHTML = '';
+};
+
+// Delete a verse comment
+window.deleteVerseComment = async function(commentId) {
+    showDeleteConfirm(async () => {
+        try {
+            const response = await fetch(`/api/verse-comments/${commentId}/delete`, {
+                method: 'DELETE'
+            });
+            
+            if (response.ok) {
+                // Reload just the verse comments for the current view
+                await reloadAllVisibleVerseComments();
+            } else {
+                showNoteMessage('Error', 'Failed to delete note');
+            }
+        } catch (error) {
+            console.error('Failed to delete comment:', error);
+            showNoteMessage('Error', 'Failed to delete note');
+        }
+    });
+};
+
+// Edit a verse comment
+window.editVerseComment = function(commentId, currentContent) {
+    showNoteEditor('Edit Note', currentContent, async (newContent) => {
+        try {
+            const response = await fetch(`/api/verse-comments/${commentId}/update`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: newContent })
+            });
+            
+            if (response.ok) {
+                // Reload just the verse comments for the current view
+                await reloadAllVisibleVerseComments();
+            } else {
+                showNoteMessage('Error', 'Failed to update note');
+            return false;
+            }
+        } catch (error) {
+            console.error('Failed to edit comment:', error);
+            showNoteMessage('Error', 'Failed to update note');
+            return false;
+        }
+    });
+};
+
+// Reload verse comments for a specific verse
+async function reloadVerseComments(book, chapter, verse) {
+    const section = document.getElementById(`verse-comments-section-${verse}`);
+    if (!section) return;
+    
+    try {
+        const comments = await loadVerseComments(book, chapter, verse);
+        const commentCount = countTotalComments(comments);
+        
+        let contentHTML = '';
+        
+        // If no comments, show empty state
+        if (commentCount === 0) {
+            contentHTML = '<div id="add-comment-form-' + verse + '"></div>';
+        } else {
+            // If comments exist, show full section
+            contentHTML = `
+                <div class="verse-comments">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                        <strong style="color: #7c3aed;">${commentCount} ${commentCount === 1 ? 'Note' : 'Notes'}</strong>
+                        <button onclick="showAddCommentForm('${escapeHtml(book)}', ${chapter}, ${verse})" 
+                                style="padding: 0.25rem 0.5rem; background-color: #9333ea; color: white; border-radius: 0.25rem; font-size: 0.75rem; cursor: pointer; border: none;">
+                            + Add Note
+                        </button>
+                    </div>
+                    <div id="add-comment-form-${verse}"></div>
+                    ${comments.map(comment => renderComment(comment, 0)).join('')}
+                </div>
+            `;
+        }
+        
+        // Update the section's innerHTML
+        section.innerHTML = contentHTML;
+        
+        // Load reactions after DOM is updated
+        if (comments.length > 0) {
+            setTimeout(() => {
+                loadVerseCommentReactionsRecursive(comments);
+            }, 0);
+        }
+    } catch (error) {
+        console.error('Failed to reload verse comments:', error);
+    }
+}
+
+// Reload all visible verse comments in the current chapter
+async function reloadAllVisibleVerseComments() {
+    if (!showVerseComments || !currentBook || !currentChapter) return;
+    
+    const verseDivs = document.querySelectorAll('[data-verse]');
+    for (const verseDiv of verseDivs) {
+        const verse = parseInt(verseDiv.getAttribute('data-verse'));
+        if (verse) {
+            await reloadVerseComments(currentBook, currentChapter, verse);
+        }
+    }
+}
+
+// Format date for comments
+function formatDate(dateString) {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+    
+    if (diffMins < 1) return 'just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return date.toLocaleDateString();
+}
+
+// WebSocket connection for real-time updates
+let ws = null;
+let wsReconnectTimeout = null;
+
+function connectWebSocket() {
+    // Only connect if user is authenticated
+    if (!currentUserId) return;
+    
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws`;
+    
+    try {
+        ws = new WebSocket(wsUrl);
+        
+        ws.onopen = function() {
+            console.log('WebSocket connected');
+            
+            // Clear any reconnection timeout
+            if (wsReconnectTimeout) {
+                clearTimeout(wsReconnectTimeout);
+                wsReconnectTimeout = null;
+            }
+        };
+        
+        ws.onmessage = function(event) {
+            try {
+                const message = JSON.parse(event.data);
+                handleWebSocketMessage(message);
+            } catch (error) {
+                console.error('Failed to parse WebSocket message:', error);
+            }
+        };
+        
+        ws.onerror = function(error) {
+            console.error('WebSocket error:', error);
+        };
+        
+        ws.onclose = function() {
+            console.log('WebSocket disconnected');
+            ws = null;
+            
+            // Reconnect after 3 seconds if user is still authenticated
+            if (currentUserId && !wsReconnectTimeout) {
+                wsReconnectTimeout = setTimeout(connectWebSocket, 3000);
+            }
+        };
+    } catch (error) {
+        console.error('Failed to create WebSocket:', error);
+    }
+}
+
+function handleWebSocketMessage(message) {
+    const { type, action, book, chapter, verse, note_id, data } = message;
+    if (hasNoteDraft()) return;
+    
+    // Handle verse comments
+    if (type === 'verse_comment') {
+        if (showVerseComments && currentBook === book && currentChapter === chapter && verse) {
+            // Reload just the affected verse's comments
+            reloadVerseComments(book, chapter, verse);
+        }
+    }
+    
+    // Handle note comments
+    if (type === 'note_comment' && note_id) {
+        const section = document.getElementById(`comments-section-${note_id}`);
+        if (section) {
+            // Reload note comments if visible
+            loadNoteCommentsInline(note_id);
+        }
+    }
+    
+    // Handle reactions
+    if (type === 'reaction' && data) {
+        const { target_type, target_id } = data;
+        if (target_type && target_id) {
+            // Reload reactions for this target
+            loadReactions(target_type, target_id);
+        }
+    }
 }
 
 // Start the application

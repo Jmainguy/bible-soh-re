@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"compress/zlib"
+	"context"
 	"embed"
 	"encoding/binary"
 	"encoding/json"
@@ -14,9 +15,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 //go:embed static
@@ -292,362 +293,7 @@ type Translation struct {
 
 var translations map[string]*Translation
 var translationNames []string
-var tagPattern = regexp.MustCompile(`<[^>]+>`)
-var sectionTitlePattern = regexp.MustCompile(`<title[^>]*(?:subType="x-preverse"|type="x-s")[^>]*>([^<]+)</title>`)
-var descriptionTitlePattern = regexp.MustCompile(`<title[^>]*type="x-description"[^>]*>([^<]+)</title>`)
-var parallelTitlePattern = regexp.MustCompile(`<title[^>]*type="parallel"[^>]*>(.*?)</title>`)
-var genericTitlePattern = regexp.MustCompile(`<title>([^<]+)</title>`)
-var crossRefPattern = regexp.MustCompile(`<note[^>]*type="crossReference"[^>]*>(.*?)</note>`)
-var crossRefWithMarkerPattern = regexp.MustCompile(`<note\s+n="([^"]+)"[^>]*type="crossReference"[^>]*>(.*?)</note>`)
-var explanationPattern = regexp.MustCompile(`<note[^>]*(?:type="explanation"|placement="foot")[^>]*>(.*?)</note>`)
-var explanationWithMarkerPattern = regexp.MustCompile(`<note\s+n="([^"]+)"[^>]*type="explanation"[^>]*>(.*?)</note>`)
-var genericNotePattern = regexp.MustCompile(`<note(?:\s+[^>]*)?>(.*?)</note>`)
-var studyNotePattern = regexp.MustCompile(`<note[^>]*type="study"[^>]*>(.*?)</note>`)
-var studyNoteWithMarkerPattern = regexp.MustCompile(`<note\s+n="([^"]+)"[^>]*type="study"[^>]*>(.*?)</note>`)
-var catchWordPattern = regexp.MustCompile(`<catchWord>([^<]+)</catchWord>`)
-var referencePattern = regexp.MustCompile(`<reference[^>]*>([^<]+)</reference>`)
-var transChangePattern = regexp.MustCompile(`<transChange[^>]*type="added"[^>]*>([^<]*)</transChange>`)
-var milestonePattern = regexp.MustCompile(`<milestone[^>]*/>`)
-var hiItalicPattern = regexp.MustCompile(`<hi type="italic">([^<]+)</hi>`)
-var hiBoldPattern = regexp.MustCompile(`<hi type="bold">([^<]+)</hi>`)
-var lineBreakPattern = regexp.MustCompile(`<lb/>`)
-
-func cleanText(text string) string {
-	// Convert italic formatting to HTML tags
-	// LEB/NASB italic text: <hi type="italic">text</hi> -> <i>text</i>
-	cleaned := hiItalicPattern.ReplaceAllString(text, "<i>$1</i>")
-
-	// Remove bold tags (used in EMTV translator notes)
-	cleaned = hiBoldPattern.ReplaceAllString(cleaned, "$1")
-
-	// Replace line breaks with spaces
-	cleaned = lineBreakPattern.ReplaceAllString(cleaned, " ")
-
-	// Temporarily replace our HTML tags with placeholders
-	cleaned = strings.ReplaceAll(cleaned, "<i>", "⟪ITALIC_START⟫")
-	cleaned = strings.ReplaceAll(cleaned, "</i>", "⟪ITALIC_END⟫")
-	cleaned = strings.ReplaceAll(cleaned, "<sup>", "⟪SUP_START⟫")
-	cleaned = strings.ReplaceAll(cleaned, "</sup>", "⟪SUP_END⟫")
-
-	// Remove all XML tags
-	cleaned = tagPattern.ReplaceAllString(cleaned, "")
-
-	// Restore HTML tags
-	cleaned = strings.ReplaceAll(cleaned, "⟪ITALIC_START⟫", "<i>")
-	cleaned = strings.ReplaceAll(cleaned, "⟪ITALIC_END⟫", "</i>")
-	cleaned = strings.ReplaceAll(cleaned, "⟪SUP_START⟫", "<sup>")
-	cleaned = strings.ReplaceAll(cleaned, "⟪SUP_END⟫", "</sup>")
-
-	// Normalize whitespace
-	cleaned = strings.Join(strings.Fields(cleaned), " ")
-	return strings.TrimSpace(cleaned)
-}
-
-func parseVerseData(text string) map[string]interface{} {
-	result := make(map[string]interface{})
-
-	// Extract section title (appears before verse) - works for both NASB and LEB
-	if match := sectionTitlePattern.FindStringSubmatch(text); len(match) > 1 {
-		result["sectionTitle"] = strings.TrimSpace(match[1])
-	}
-
-	// Extract generic title (EMTV) - simple <title> tags without attributes
-	if _, exists := result["sectionTitle"]; !exists {
-		if match := genericTitlePattern.FindStringSubmatch(text); len(match) > 1 {
-			result["sectionTitle"] = strings.TrimSpace(match[1])
-		}
-	}
-
-	// Extract chapter description (AKJV) - appears at beginning of chapter
-	if match := descriptionTitlePattern.FindStringSubmatch(text); len(match) > 1 {
-		result["introNote"] = strings.TrimSpace(match[1])
-	}
-
-	// Extract cross-references with markers (NASB)
-	type NoteWithMarker struct {
-		Marker string `json:"marker,omitempty"`
-		Text   string `json:"text"`
-	}
-
-	crossRefs := []NoteWithMarker{}
-
-	// BSB parallel references - extract and add to cross-references
-	for _, match := range parallelTitlePattern.FindAllStringSubmatch(text, -1) {
-		if len(match) > 1 {
-			noteContent := match[1]
-			refs := referencePattern.FindAllStringSubmatch(noteContent, -1)
-			refList := []string{}
-			for _, ref := range refs {
-				if len(ref) > 1 {
-					refList = append(refList, strings.TrimSpace(ref[1]))
-				}
-			}
-			if len(refList) > 0 {
-				crossRefs = append(crossRefs, NoteWithMarker{Text: "See also: " + strings.Join(refList, "; ")})
-			}
-		}
-	}
-
-	// First try with markers (NASB)
-	for _, match := range crossRefWithMarkerPattern.FindAllStringSubmatch(text, -1) {
-		if len(match) > 2 {
-			marker := match[1]
-			noteContent := match[2]
-			refs := referencePattern.FindAllStringSubmatch(noteContent, -1)
-			refList := []string{}
-			for _, ref := range refs {
-				if len(ref) > 1 {
-					refList = append(refList, strings.TrimSpace(ref[1]))
-				}
-			}
-			if len(refList) > 0 {
-				crossRefs = append(crossRefs, NoteWithMarker{Marker: marker, Text: strings.Join(refList, "; ")})
-			}
-		}
-	}
-	// Fallback for notes without markers (LEB)
-	if len(crossRefs) == 0 {
-		for _, match := range crossRefPattern.FindAllStringSubmatch(text, -1) {
-			if len(match) > 1 {
-				noteContent := match[1]
-				refs := referencePattern.FindAllStringSubmatch(noteContent, -1)
-				refList := []string{}
-				for _, ref := range refs {
-					if len(ref) > 1 {
-						refList = append(refList, strings.TrimSpace(ref[1]))
-					}
-				}
-				if len(refList) > 0 {
-					crossRefs = append(crossRefs, NoteWithMarker{Text: strings.Join(refList, "; ")})
-				}
-			}
-		}
-	}
-	if len(crossRefs) > 0 {
-		result["crossReferences"] = crossRefs
-	}
-
-	// Extract study notes (KJV marginal notes and alternative readings)
-	// These use catchWord tags to indicate where the marker should appear
-	type StudyNoteWithCatchWord struct {
-		Marker    string
-		Text      string
-		CatchWord string
-	}
-	studyNotesWithCatch := []StudyNoteWithCatchWord{}
-
-	// Extract study notes and their catch words
-	letterIdx := 0
-	for _, match := range studyNotePattern.FindAllStringSubmatch(text, -1) {
-		if len(match) > 1 {
-			noteContent := match[1]
-			// Extract catch word
-			catchWord := ""
-			if cwMatch := catchWordPattern.FindStringSubmatch(noteContent); len(cwMatch) > 1 {
-				catchWord = cwMatch[1]
-			}
-			// Remove all tags to get clean note text
-			noteText := tagPattern.ReplaceAllString(noteContent, "")
-			noteText = strings.TrimSpace(noteText)
-			if noteText != "" {
-				// Assign letter marker (A, B, C, etc.)
-				marker := string(rune('A' + letterIdx))
-				letterIdx++
-				studyNotesWithCatch = append(studyNotesWithCatch, StudyNoteWithCatchWord{
-					Marker:    marker,
-					Text:      noteText,
-					CatchWord: catchWord,
-				})
-			}
-		}
-	}
-
-	// Convert to output format for JSON
-	studyNotes := []NoteWithMarker{}
-	for _, note := range studyNotesWithCatch {
-		studyNotes = append(studyNotes, NoteWithMarker{Marker: note.Marker, Text: note.Text})
-	}
-	if len(studyNotes) > 0 {
-		result["studyNotes"] = studyNotes
-	}
-
-	// Extract explanatory notes with markers (both NASB and LEB)
-	notes := []NoteWithMarker{}
-	// First try with markers (NASB)
-	for _, match := range explanationWithMarkerPattern.FindAllStringSubmatch(text, -1) {
-		if len(match) > 2 {
-			marker := match[1]
-			noteText := tagPattern.ReplaceAllString(match[2], "")
-			noteText = strings.TrimSpace(noteText)
-			if noteText != "" {
-				notes = append(notes, NoteWithMarker{Marker: marker, Text: noteText})
-			}
-		}
-	}
-	// Fallback for notes without markers (LEB) - assign letters
-	if len(notes) == 0 {
-		letterIdx := 0
-		for _, match := range explanationPattern.FindAllStringSubmatch(text, -1) {
-			if len(match) > 1 {
-				noteText := tagPattern.ReplaceAllString(match[1], "")
-				noteText = strings.TrimSpace(noteText)
-				if noteText != "" {
-					marker := string(rune('a' + letterIdx))
-					notes = append(notes, NoteWithMarker{Marker: marker, Text: noteText})
-					letterIdx++
-				}
-			}
-		}
-	}
-	if len(notes) > 0 {
-		result["notes"] = notes
-	}
-
-	// Extract generic notes (EMTV) - these don't have type attributes
-	// Only process if no other notes were found to avoid duplicates
-	if len(notes) == 0 {
-		letterIdx := 0
-		for _, match := range genericNotePattern.FindAllStringSubmatch(text, -1) {
-			if len(match) > 1 {
-				noteContent := match[1]
-				// Check if this is a very long note (like EMTV translator's message)
-				if len(noteContent) > 500 {
-					// Extract as introductory note
-					// First convert reference tags to plain text
-					noteText := referencePattern.ReplaceAllString(noteContent, "$1")
-					noteText = hiBoldPattern.ReplaceAllString(noteText, "")
-					noteText = lineBreakPattern.ReplaceAllString(noteText, "\n")
-					noteText = tagPattern.ReplaceAllString(noteText, "")
-					noteText = strings.TrimSpace(noteText)
-					if noteText != "" {
-						result["introNote"] = noteText
-					}
-					continue
-				}
-				// Convert reference tags to plain text before removing other tags
-				noteText := referencePattern.ReplaceAllString(noteContent, "$1")
-				noteText = hiBoldPattern.ReplaceAllString(noteText, "")
-				noteText = lineBreakPattern.ReplaceAllString(noteText, " ")
-				noteText = tagPattern.ReplaceAllString(noteText, "")
-				noteText = strings.TrimSpace(noteText)
-				if noteText != "" {
-					marker := string(rune('a' + letterIdx))
-					notes = append(notes, NoteWithMarker{Marker: marker, Text: noteText})
-					letterIdx++
-				}
-			}
-		}
-		if len(notes) > 0 {
-			result["notes"] = notes
-		}
-	}
-
-	// Remove section titles from the main text
-	cleanedText := text
-	cleanedText = sectionTitlePattern.ReplaceAllString(cleanedText, "")
-	cleanedText = descriptionTitlePattern.ReplaceAllString(cleanedText, "")
-	cleanedText = parallelTitlePattern.ReplaceAllString(cleanedText, "")
-	cleanedText = genericTitlePattern.ReplaceAllString(cleanedText, "")
-
-	// Replace catch words in study notes with markers
-	// We need to do this before removing the study notes themselves
-	for _, studyNote := range studyNotesWithCatch {
-		if studyNote.CatchWord != "" {
-			catchWord := studyNote.CatchWord
-
-			// Check if catch word ends with ellipsis (…) indicating partial match
-			isPartial := strings.HasSuffix(catchWord, "…") || strings.HasSuffix(catchWord, "...")
-			if isPartial {
-				// Strip ellipsis for partial matching
-				catchWord = strings.TrimSuffix(catchWord, "…")
-				catchWord = strings.TrimSuffix(catchWord, "...")
-				// Match the prefix of a word
-				catchWordPattern := regexp.MustCompile(`(>|\s|^)(` + regexp.QuoteMeta(catchWord) + `[^<]*)`)
-				cleanedText = catchWordPattern.ReplaceAllString(cleanedText, `${1}${2}<sup>[`+studyNote.Marker+`]</sup>`)
-			} else {
-				// Exact match for whole words
-				catchWordPattern := regexp.MustCompile(`(>|\s|^)(` + regexp.QuoteMeta(catchWord) + `)(</w>|<|\s|[.,;:]|$)`)
-				cleanedText = catchWordPattern.ReplaceAllString(cleanedText, `${1}${2}<sup>[`+studyNote.Marker+`]</sup>${3}`)
-			}
-		}
-	}
-
-	// Remove study notes (KJV marginal notes) completely
-	cleanedText = studyNoteWithMarkerPattern.ReplaceAllString(cleanedText, "")
-	cleanedText = studyNotePattern.ReplaceAllString(cleanedText, "")
-
-	// Replace cross-references with markers
-	cleanedText = crossRefWithMarkerPattern.ReplaceAllString(cleanedText, "<sup>[$1]</sup>")
-	cleanedText = crossRefPattern.ReplaceAllString(cleanedText, "") // Remove unmarked ones
-
-	// Replace explanatory notes with markers
-	if len(notes) > 0 {
-		// For NASB with markers
-		cleanedText = explanationWithMarkerPattern.ReplaceAllString(cleanedText, "<sup>[$1]</sup>")
-		// For LEB/EMTV without markers - use sequential letters
-		letterIdx := 0
-		// First try specific typed notes
-		cleanedText = explanationPattern.ReplaceAllStringFunc(cleanedText, func(match string) string {
-			if letterIdx < len(notes) {
-				marker := notes[letterIdx].Marker
-				letterIdx++
-				return "<sup>[" + marker + "]</sup>"
-			}
-			return ""
-		})
-		// Then generic notes (EMTV)
-		cleanedText = genericNotePattern.ReplaceAllStringFunc(cleanedText, func(match string) string {
-			// Skip very long notes (like translator's message)
-			if len(match) > 500 {
-				return ""
-			}
-			if letterIdx < len(notes) {
-				marker := notes[letterIdx].Marker
-				letterIdx++
-				return "<sup>[" + marker + "]</sup>"
-			}
-			return ""
-		})
-	} else {
-		cleanedText = explanationPattern.ReplaceAllString(cleanedText, "")
-		// Remove generic notes without markers
-		cleanedText = genericNotePattern.ReplaceAllStringFunc(cleanedText, func(match string) string {
-			// Always remove long notes (translator's message)
-			return ""
-		})
-	}
-
-	// Convert LEB idioms to italic tags BEFORE removing milestones
-	// Pattern: <milestone type="x-idiom-start"/>⌞text⌟<milestone type="x-idiom-end"/>
-	// Unicode: ⌞ = U+231E, ⌟ = U+231F
-	idiomWithMilestones := regexp.MustCompile(`<milestone type="x-idiom-start"/>⌞([^⌟]+)⌟<milestone type="x-idiom-end"/>`)
-	cleanedText = idiomWithMilestones.ReplaceAllString(cleanedText, "<i>$1</i>")
-
-	// Remove remaining milestones (LEB specific)
-	cleanedText = milestonePattern.ReplaceAllString(cleanedText, "")
-
-	// Remove x-preverse and other divs
-	cleanedText = regexp.MustCompile(`<div[^>]*subType="x-preverse"[^>]*>.*?</div>`).ReplaceAllString(cleanedText, "")
-	cleanedText = regexp.MustCompile(`<div[^>]*type="x-milestone"[^>]*/>`).ReplaceAllString(cleanedText, "")
-	cleanedText = regexp.MustCompile(`<div[^>]*type="x-milestone"[^>]*>`).ReplaceAllString(cleanedText, "")
-	cleanedText = regexp.MustCompile(`<div[^>]*type="introduction"[^>]*/?>`).ReplaceAllString(cleanedText, "")
-	cleanedText = regexp.MustCompile(`<div[^>]*(?:sID|eID)="[^"]*"[^>]*/?>`).ReplaceAllString(cleanedText, "")
-	cleanedText = regexp.MustCompile(`<div[^>]*type="x-p"[^>]*/?>`).ReplaceAllString(cleanedText, "")
-	cleanedText = regexp.MustCompile(`</div>`).ReplaceAllString(cleanedText, "")
-
-	// Handle transChange tags (LEB) - keep the added text but mark it
-	cleanedText = transChangePattern.ReplaceAllString(cleanedText, "$1")
-
-	// Remove chapter tags
-	cleanedText = regexp.MustCompile(`<chapter[^>]*>.*?</chapter>`).ReplaceAllString(cleanedText, "")
-	cleanedText = regexp.MustCompile(`<chapter[^>]*/>`).ReplaceAllString(cleanedText, "")
-
-	// Clean main text (remove remaining XML tags)
-	result["text"] = cleanText(cleanedText)
-
-	return result
-}
-
+var authDB *Database // Global database reference for filter preferences
 func loadTranslation(name, path, fullName, description, testaments string) error {
 	log.Printf("Loading translation: %s from %s", name, path)
 
@@ -717,7 +363,7 @@ func loadTranslation(name, path, fullName, description, testaments string) error
 	return nil
 }
 
-func getChapter(translation, bookName string, chapter int) ([]map[string]interface{}, error) {
+func getChapter(translation, bookName string, chapter int, filters OSISFilters, includeRaw bool) ([]map[string]interface{}, error) {
 	trans, ok := translations[translation]
 	if !ok {
 		return nil, fmt.Errorf("translation not found: %s", translation)
@@ -771,8 +417,42 @@ func getChapter(translation, bookName string, chapter int) ([]map[string]interfa
 		if err != nil {
 			rawText = ""
 		}
-		verseData := parseVerseData(rawText)
-		verseData["verse"] = v
+		// Use the new OSIS parser
+		parsedVerse := ParseOSISVerse(rawText, filters)
+
+		// Convert ParsedVerse to map for JSON compatibility
+		verseData := map[string]interface{}{
+			"verse": v,
+			"text":  parsedVerse.Text,
+		}
+
+		if includeRaw {
+			verseData["rawOSIS"] = parsedVerse.RawOSIS
+		}
+		// include debug passes when available
+		if parsedVerse.DebugPass1 != "" {
+			verseData["debugPass1"] = parsedVerse.DebugPass1
+		}
+		if parsedVerse.DebugPass2 != "" {
+			verseData["debugPass2"] = parsedVerse.DebugPass2
+		}
+
+		if parsedVerse.SectionTitle != "" {
+			verseData["sectionTitle"] = parsedVerse.SectionTitle
+		}
+		if len(parsedVerse.Footnotes) > 0 {
+			verseData["notes"] = parsedVerse.Footnotes
+		}
+		if len(parsedVerse.CrossRefs) > 0 {
+			verseData["crossReferences"] = parsedVerse.CrossRefs
+		}
+		if len(parsedVerse.StrongsNumbers) > 0 {
+			verseData["strongsNumbers"] = parsedVerse.StrongsNumbers
+		}
+		if parsedVerse.HasRedLetters {
+			verseData["hasRedLetters"] = true
+		}
+
 		verses[v-1] = verseData
 	}
 
@@ -811,7 +491,7 @@ func handleBooks(w http.ResponseWriter, r *http.Request) {
 	// Get the translation to check which testaments are available
 	trans, ok := translations[translationName]
 	if !ok {
-		http.Error(w, "Translation not found", http.StatusBadRequest)
+		respondError(w, "Translation not found", http.StatusBadRequest)
 		return
 	}
 
@@ -840,7 +520,7 @@ func handleBooks(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(books); err != nil {
 		log.Printf("Failed to encode books: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		respondError(w, "Internal server error", http.StatusInternalServerError)
 	}
 }
 
@@ -850,18 +530,70 @@ func handleChapter(w http.ResponseWriter, r *http.Request) {
 	translation := r.URL.Query().Get("translation")
 
 	if translation == "" {
+		if len(translationNames) == 0 {
+			respondError(w, "No translations available", http.StatusServiceUnavailable)
+			return
+		}
 		translation = translationNames[0]
 	}
 
 	chapter, err := strconv.Atoi(chapterStr)
 	if err != nil {
-		http.Error(w, "Invalid chapter number", http.StatusBadRequest)
+		respondError(w, "Invalid chapter number", http.StatusBadRequest)
 		return
 	}
 
-	verses, err := getChapter(translation, book, chapter)
+	// Parse filter preferences from query parameters
+	// If not specified in query, try to get from authenticated user's preferences
+	// Otherwise default to all enabled (true)
+	filters := OSISFilters{
+		ShowStrongs:    r.URL.Query().Get("showStrongs") != "false",
+		ShowFootnotes:  r.URL.Query().Get("showFootnotes") != "false",
+		ShowScripref:   r.URL.Query().Get("showScripref") != "false",
+		ShowHeadings:   r.URL.Query().Get("showHeadings") != "false",
+		ShowRedLetters: r.URL.Query().Get("showRedLetters") != "false",
+		ShowLemma:      r.URL.Query().Get("showLemma") != "false",
+		ShowMorph:      r.URL.Query().Get("showMorph") != "false",
+		ShowXlit:       r.URL.Query().Get("showXlit") != "false",
+	}
+
+	// If user is authenticated and no explicit filters in query, use their preferences
+	if cookie, err := r.Cookie(sessionCookieName); err == nil {
+		if session, err := authDB.GetSession(cookie.Value); err == nil {
+			if user, err := authDB.GetUserByID(session.UserID); err == nil {
+				// Only use user preferences if no explicit filter params in URL
+				if r.URL.Query().Get("showStrongs") == "" {
+					filters.ShowStrongs = user.FilterStrongs
+				}
+				if r.URL.Query().Get("showFootnotes") == "" {
+					filters.ShowFootnotes = user.FilterFootnotes
+				}
+				if r.URL.Query().Get("showScripref") == "" {
+					filters.ShowScripref = user.FilterScripref
+				}
+				if r.URL.Query().Get("showHeadings") == "" {
+					filters.ShowHeadings = user.FilterHeadings
+				}
+				if r.URL.Query().Get("showRedLetters") == "" {
+					filters.ShowRedLetters = user.FilterRedLetters
+				}
+				if r.URL.Query().Get("showLemma") == "" {
+					filters.ShowLemma = user.FilterLemma
+				}
+				if r.URL.Query().Get("showMorph") == "" {
+					filters.ShowMorph = user.FilterMorph
+				}
+				if r.URL.Query().Get("showXlit") == "" {
+					filters.ShowXlit = user.FilterXlit
+				}
+			}
+		}
+	}
+
+	includeRaw := r.URL.Query().Get("rawOSIS") == "1"
+	verses, err := getChapter(translation, book, chapter, filters, includeRaw)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -874,7 +606,7 @@ func handleChapter(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Printf("Failed to encode response: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		respondError(w, "Internal server error", http.StatusInternalServerError)
 	}
 }
 
@@ -907,11 +639,14 @@ func main() {
 	for _, tc := range config.Translations {
 		translationPath := filepath.Join(translationsDir(), tc.Name)
 		if err := loadTranslation(tc.Name, translationPath, tc.FullName, tc.Description, tc.Testaments); err != nil {
-			log.Printf("Warning: Could not load %s: %v", tc.Name, err)
+			log.Fatalf("Could not load required translation %s: %v", tc.Name, err)
 		} else {
 			translationNames = append(translationNames, tc.Name)
 		}
 	}
+
+	// Strong's lexicon loading has been removed; do not load a hard-coded
+	// lexicon at startup. Lemma lookup will rely on embedded OSIS data only.
 
 	if len(translations) == 0 {
 		log.Fatal("No translations could be loaded")
@@ -981,17 +716,200 @@ func main() {
 		fmt.Printf("%s\n", rawText)
 		return
 	} // Setup HTTP routes
+
+	// Initialize database
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		dsn = "bible.db"
+	}
+	db, err := NewDatabase(dsn)
+	if err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Printf("Error closing database: %v", err)
+		}
+	}()
+
+	// Set global database reference for handleChapter filter preferences
+	authDB = db
+
+	if baseURL := os.Getenv("BASE_URL"); baseURL != "" {
+		config.Auth.BaseURL = baseURL
+	}
+	if db.db.postgres {
+		stop, err := db.startLiveUpdates(dsn)
+		if err != nil {
+			log.Fatalf("Failed to start live updates: %v", err)
+		}
+		defer stop()
+	}
+	http.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := db.db.PingContext(ctx); err != nil {
+			http.Error(w, "Database unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	// Initialize authentication handler
+	authHandler := NewAuthHandler(db, &config.Auth)
+
+	// Auth routes
+	http.HandleFunc("/auth/register", authHandler.handleRegister)
+	http.HandleFunc("/auth/login", authHandler.handleLogin)
+	http.HandleFunc("/auth/logout", authHandler.handleLogout)
+	http.HandleFunc("/auth/google", authHandler.handleGoogleLogin)
+	http.HandleFunc("/auth/google/callback", authHandler.handleGoogleCallback)
+	http.HandleFunc("/auth/github", authHandler.handleGitHubLogin)
+	http.HandleFunc("/auth/github/callback", authHandler.handleGitHubCallback)
+	http.HandleFunc("/api/auth/status", authHandler.handleGetUserInfo) // Auth status check
+	http.HandleFunc("/api/auth/logout", authHandler.handleLogout)      // API version of logout
+	http.HandleFunc("/api/user", authHandler.handleGetUserInfo)
+	http.HandleFunc("/api/reading-position", authHandler.handleGetReadingPosition)
+	http.HandleFunc("/api/save-reading-position", authHandler.handleSaveReadingPosition)
+
+	// Profile routes
+	http.HandleFunc("/api/profile", authHandler.handleGetProfile)
+	http.HandleFunc("/api/profile/update", authHandler.handleUpdateProfile)
+	http.HandleFunc("/api/profile/picture", authHandler.handleUploadProfilePicture)
+	http.HandleFunc("/api/profile/translation", authHandler.handleUpdateDefaultTranslation)
+	http.HandleFunc("/api/profile/filters", authHandler.handleUpdateFilters)
+	http.HandleFunc("/api/profile/filters/get", authHandler.handleGetFilters)
+
+	// User groups route (for dropdowns, etc.)
+	http.HandleFunc("/api/user/groups", authHandler.handleGetUserGroups)
+
+	// RESTful group management routes
+	http.HandleFunc("/api/groups/", authHandler.handleGroupsRESTful)
+
+	// Logo upload
+	http.HandleFunc("/api/upload/logo", authHandler.handleUploadLogo)
+
+	// Study plans routes
+	http.HandleFunc("/api/study-plans/create", authHandler.handleCreateStudyPlan)
+	http.HandleFunc("/api/study-plans/list", authHandler.handleGetGroupStudyPlans)
+	http.HandleFunc("/api/study-plans/update", authHandler.handleUpdateStudyPlan)
+	http.HandleFunc("/api/study-plans/delete", authHandler.handleDeleteStudyPlan)
+
+	// RESTful notes routes
+	http.HandleFunc("/api/notes/", authHandler.handleNotesRESTful)
+
+	// Verse comments routes
+	http.HandleFunc("/api/verse-comments/", authHandler.handleVerseCommentsRESTful)
+
+	// Comments routes (RESTful)
+	http.HandleFunc("/api/comments/", authHandler.handleCommentsRESTful)
+
+	// Prayer request routes
+	http.HandleFunc("/api/prayers/", authHandler.handlePrayersRESTful)
+	http.HandleFunc("/api/prayer-comments/delete", authHandler.handleDeletePrayerComment)
+
+	// Reaction routes
+	http.HandleFunc("/api/reactions/toggle", authHandler.handleToggleReaction)
+	http.HandleFunc("/api/reactions/summary", authHandler.handleGetReactionsSummary)
+
+	// WebSocket route
+	http.HandleFunc("/ws", authHandler.HandleWebSocket)
+
+	// API routes
 	http.HandleFunc("/api/translations", handleTranslations)
 	http.HandleFunc("/api/books", handleBooks)
 	http.HandleFunc("/api/chapter", handleChapter)
+
+	// Serve static files
+	http.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "static/login.html")
+	})
+	http.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "static/register.html")
+	})
+	http.HandleFunc("/groups", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "static/groups.html")
+	})
+	http.HandleFunc("/group", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "static/group.html")
+	})
+	http.HandleFunc("/profile", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "static/profile.html")
+	})
+
+	// Serve uploaded files
+	http.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("static/uploads"))))
 
 	// Serve static files from embedded filesystem at root
 	staticFS, err := fs.Sub(staticFiles, "static")
 	if err != nil {
 		log.Fatal(err)
 	}
-	http.Handle("/", http.FileServer(http.FS(staticFS)))
 
-	log.Println("Server starting on http://localhost:8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	// Custom handler for root path to support URL parameters for deep linking
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Only handle root path and index.html
+		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+			// Check if there are URL parameters for deep linking
+			book := r.URL.Query().Get("book")
+			translation := r.URL.Query().Get("translation")
+
+			// If book is specified but translation is not, redirect with user's default translation
+			if book != "" && translation == "" {
+				// Try to get the current user's default translation
+				if cookie, err := r.Cookie(sessionCookieName); err == nil {
+					if session, err := db.GetSession(cookie.Value); err == nil {
+						if user, err := db.GetUserByID(session.UserID); err == nil && user.DefaultTranslation != "" {
+							// Redirect to the same URL with the user's default translation
+							query := r.URL.Query()
+							query.Set("translation", user.DefaultTranslation)
+							r.URL.RawQuery = query.Encode()
+							http.Redirect(w, r, r.URL.String(), http.StatusFound)
+							return
+						}
+					}
+				}
+				// If not logged in or no default set, use the first loaded translation
+				query := r.URL.Query()
+				query.Set("translation", translationNames[0])
+				r.URL.RawQuery = query.Encode()
+				http.Redirect(w, r, r.URL.String(), http.StatusFound)
+				return
+			}
+		}
+
+		// Serve static files normally
+		http.FileServer(http.FS(staticFS)).ServeHTTP(w, r)
+	})
+
+	// Start WebSocket hub
+	go hub.Run()
+
+	// Start background job for auto-archiving prayer requests
+	go func() {
+		ticker := time.NewTicker(24 * time.Hour) // Run once per day
+		defer ticker.Stop()
+
+		// Run immediately on startup
+		if err := db.AutoArchiveOldPrayers(); err != nil {
+			log.Printf("Error auto-archiving prayers: %v", err)
+		} else {
+			log.Println("Auto-archive job completed successfully")
+		}
+
+		// Then run daily
+		for range ticker.C {
+			if err := db.AutoArchiveOldPrayers(); err != nil {
+				log.Printf("Error auto-archiving prayers: %v", err)
+			} else {
+				log.Println("Auto-archive job completed successfully")
+			}
+		}
+	}()
+
+	addr := os.Getenv("LISTEN_ADDR")
+	if addr == "" {
+		addr = ":8080"
+	}
+	log.Printf("Server listening on %s", addr)
+	log.Fatal(http.ListenAndServe(addr, nil))
 }

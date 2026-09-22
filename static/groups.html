@@ -1,0 +1,1652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Study Groups - Bible Reader</title>
+    <link rel="icon" type="image/png" href="/brand-bible.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,600;0,700;1,400&family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/tailwind.css">
+    <style>
+        body {
+            background-color: #f5f1e8;
+            font-family: 'EB Garamond', 'Crimson Text', Georgia, serif;
+        }
+        .bible-page {
+            background-color: #fffef9;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1), inset 0 0 100px rgba(139,69,19,0.02);
+        }
+        .page-title {
+            font-family: 'EB Garamond', Georgia, serif;
+            color: #5d4e37;
+            letter-spacing: 0.025em;
+        }
+        .tab-btn {
+            font-family: 'EB Garamond', Georgia, serif;
+            transition: all 0.2s;
+        }
+        .tab-btn.active {
+            color: #8b4513;
+            border-bottom-color: #8b4513;
+        }
+        .group-card {
+            background-color: #fffef9;
+            border: 1px solid #e5dcc8;
+            transition: all 0.3s;
+        }
+        .group-card:hover {
+            box-shadow: 0 4px 12px rgba(139, 69, 19, 0.15);
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #8b4513 0%, #654321 100%);
+            color: #fffef9;
+            transition: all 0.2s;
+        }
+        .btn-primary:hover {
+            box-shadow: 0 4px 12px rgba(139, 69, 19, 0.3);
+            transform: translateY(-1px);
+        }
+        .btn-secondary {
+            background-color: #e5dcc8;
+            color: #5d4e37;
+        }
+        .btn-secondary:hover {
+            background-color: #d4cbb8;
+        }
+        .modal-overlay {
+            background-color: rgba(93, 78, 55, 0.5);
+        }
+    </style>
+    <link rel="stylesheet" href="/brand.css">
+</head>
+<body>
+    <div class="min-h-screen">
+        <!-- Header -->
+        <header class="brand-header">
+            <div class="container mx-auto px-4 py-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <a class="brand-small" href="/"><img src="/brand-bible.png" alt="" width="40" height="40">Holy Bible</a>
+                        <h1 class="text-3xl font-bold" style="font-family: 'EB Garamond', Georgia, serif;">Study Groups</h1>
+                        <p class="text-blue-200 mt-1">Collaborative Bible Study</p>
+                    </div>
+                    <div class="flex gap-3">
+                        <a href="/" class="px-4 py-2 bg-blue-700 hover:bg-blue-600 rounded-lg transition">
+                            ← Back to Bible
+                        </a>
+                        <a href="/profile" class="px-4 py-2 bg-blue-700 hover:bg-blue-600 rounded-lg transition">
+                            My Profile
+                        </a>
+                        <button id="logoutBtn" class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg transition">
+                            Logout
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="container mx-auto px-4 py-8 max-w-6xl">
+            <!-- Tabs -->
+            <div class="bible-page rounded-lg mb-6">
+                <div class="flex gap-2 px-6 pt-6 border-b border-gray-200">
+                    <button id="myGroupsTab" class="tab-btn active px-6 py-3 font-medium border-b-2 border-transparent text-lg">
+                        My Groups
+                    </button>
+                    <button id="invitesTab" class="tab-btn px-6 py-3 font-medium border-b-2 border-transparent text-gray-600 hover:text-gray-900 text-lg">
+                        Invites
+                    </button>
+                </div>
+
+                <!-- My Groups View -->
+                <div id="myGroupsView" class="p-6">
+                    <!-- Create Group Button -->
+                    <div class="mb-6">
+                        <button id="createGroupBtn" class="btn-primary px-6 py-3 rounded-lg font-medium">
+                            + Create New Group
+                        </button>
+                    </div>
+
+                    <!-- Groups List -->
+                    <div id="groupsList" class="space-y-4">
+                        <!-- Groups will be inserted here -->
+                    </div>
+                </div>
+
+                <!-- Invites View -->
+                <div id="invitesView" class="hidden p-6">
+                    <div id="invitesList" class="space-y-4">
+                        <!-- Invites will be inserted here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Group Modal -->
+    <div id="createGroupModal" class="fixed inset-0 modal-overlay hidden items-center justify-center z-50">
+        <div class="bible-page rounded-xl p-8 max-w-2xl w-full mx-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <h2 class="page-title text-2xl font-bold mb-6">
+                Create Study Group
+            </h2>
+            <form id="createGroupForm">
+                <div class="mb-4">
+                    <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Group Name *</label>
+                    <input type="text" id="groupName" required 
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                           style="background-color: #fffef9;"
+                           placeholder="e.g., Tuesday Night Bible Study">
+                </div>
+                
+                <!-- Logo Upload -->
+                <div class="mb-4">
+                    <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Group Logo (optional)</label>
+                    <input type="file" id="groupLogo" accept="image/*" 
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                           style="background-color: #fffef9;">
+                    <div id="logoPreview" class="mt-2 hidden">
+                        <img id="logoPreviewImg" class="w-24 h-24 object-cover rounded-lg border border-gray-300">
+                    </div>
+                    <p class="text-xs mt-1" style="color: #8b7355;">Upload an image to represent your study group</p>
+                </div>
+                
+                <!-- Invite Members -->
+                <div class="mb-4">
+                    <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Invite Members (optional)</label>
+                    <div id="emailInputs" class="space-y-2">
+                        <input type="email" class="email-input w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                               style="background-color: #fffef9;"
+                               placeholder="Email address">
+                    </div>
+                    <button type="button" id="addEmailBtn" class="mt-2 text-sm font-medium" style="color: #8b4513;">
+                        + Add another email
+                    </button>
+                    <p class="text-xs mt-1" style="color: #8b7355;">Invite members by email - they'll receive an invitation to join</p>
+                </div>
+                
+                <div class="flex gap-3 mt-6">
+                    <button type="submit" class="flex-1 btn-primary px-6 py-3 rounded-lg font-medium">
+                        Create Group
+                    </button>
+                    <button type="button" id="cancelCreateBtn" class="flex-1 btn-secondary px-6 py-3 rounded-lg font-medium">
+                        Cancel
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Message Modal -->
+    <div id="messageModal" class="fixed inset-0 modal-overlay hidden items-center justify-center z-50">
+        <div class="bible-page rounded-xl p-8 max-w-md w-full mx-4 shadow-2xl">
+            <h2 id="messageTitle" class="page-title text-2xl font-bold mb-4">
+                Message
+            </h2>
+            <p id="messageText" class="mb-6" style="color: #5d4e37;">
+            </p>
+            <button id="closeMessageBtn" class="w-full btn-primary px-6 py-3 rounded-lg font-medium">
+                OK
+            </button>
+        </div>
+    </div>
+
+    <!-- Mark as Answered Modal -->
+    <div id="markAnsweredModal" class="fixed inset-0 modal-overlay hidden items-center justify-center z-50">
+        <div class="bible-page rounded-xl p-8 max-w-2xl w-full mx-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <h2 class="page-title text-2xl font-bold mb-4">Mark Prayer as Answered</h2>
+            <p class="text-sm mb-4" style="color: #6b5d4f;">How did God answer this prayer? Please provide context so others can see how God works.</p>
+            <form id="markAnsweredForm">
+                <input type="hidden" id="answeredPrayerId">
+                <input type="hidden" id="answeredPrayerGroupId">
+                <div class="mb-4">
+                    <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Answer Explanation (Optional)</label>
+                    <textarea id="answerExplanation" rows="6"
+                              placeholder="Share how God answered this prayer. Remember, God's answers aren't always what we expect, but they are always purposeful..."
+                              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500"
+                              style="background-color: #fffef9;"></textarea>
+                </div>
+                <div class="flex gap-3">
+                    <button type="submit" class="flex-1 btn-primary px-6 py-3 rounded-lg font-medium">Mark as Answered</button>
+                    <button type="button" id="cancelAnsweredBtn" class="flex-1 btn-secondary px-6 py-3 rounded-lg font-medium">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Edit Answer Modal -->
+    <div id="editAnswerModal" class="fixed inset-0 modal-overlay hidden items-center justify-center z-50">
+        <div class="bible-page rounded-xl p-8 max-w-2xl w-full mx-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <h2 class="page-title text-2xl font-bold mb-4">Edit Answer Explanation</h2>
+            <p class="text-sm mb-4" style="color: #6b5d4f;">Update how God answered this prayer.</p>
+            <form id="editAnswerForm">
+                <input type="hidden" id="editAnswerPrayerId">
+                <input type="hidden" id="editAnswerPrayerGroupId">
+                <div class="mb-4">
+                    <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Answer Explanation (Optional)</label>
+                    <textarea id="editAnswerExplanation" rows="6"
+                              placeholder="Share how God answered this prayer. Remember, God's answers aren't always what we expect, but they are always purposeful..."
+                              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500"
+                              style="background-color: #fffef9;"></textarea>
+                </div>
+                <div class="flex gap-3">
+                    <button type="submit" class="flex-1 btn-primary px-6 py-3 rounded-lg font-medium">Update Answer</button>
+                    <button type="button" id="cancelEditAnswerBtn" class="flex-1 btn-secondary px-6 py-3 rounded-lg font-medium">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Invite Member Modal -->
+    <div id="inviteMemberModal" class="fixed inset-0 modal-overlay hidden items-center justify-center z-50">
+        <div class="bible-page rounded-xl p-8 max-w-md w-full mx-4 shadow-2xl">
+            <h2 class="page-title text-2xl font-bold mb-6">
+                Invite Member
+            </h2>
+            <form id="inviteMemberForm">
+                <input type="hidden" id="inviteGroupId">
+                <div class="mb-6">
+                    <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Username or Email</label>
+                    <input type="text" id="inviteUsername" required 
+                           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                           style="background-color: #fffef9;"
+                           placeholder="Enter username or email">
+                </div>
+                <div class="flex gap-3">
+                    <button type="submit" class="flex-1 btn-primary px-6 py-3 rounded-lg font-medium">
+                        Send Invite
+                    </button>
+                    <button type="button" id="cancelInviteBtn" class="flex-1 btn-secondary px-6 py-3 rounded-lg font-medium">
+                        Cancel
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Add Study Plan Modal -->
+    <div id="addStudyPlanModal" class="fixed inset-0 modal-overlay hidden items-center justify-center z-50">
+        <div class="bible-page rounded-xl p-8 max-w-lg w-full mx-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <h2 class="page-title text-2xl font-bold mb-6">
+                Add Study Plan Week
+            </h2>
+            <form id="addStudyPlanForm">
+                <input type="hidden" id="planGroupId">
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Week Number *</label>
+                        <input type="number" id="planWeekNumber" min="1" required
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                               style="background-color: #fffef9;">
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Start Date *</label>
+                            <input type="date" id="planStartDate" required
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                   style="background-color: #fffef9;">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">End Date *</label>
+                            <input type="date" id="planEndDate" required
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                   style="background-color: #fffef9;">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Book *</label>
+                        <input type="text" id="planBook" required
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                               style="background-color: #fffef9;"
+                               placeholder="e.g., Genesis">
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Start Chapter *</label>
+                            <input type="number" id="planStartChapter" min="1" required
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                   style="background-color: #fffef9;">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">End Chapter *</label>
+                            <input type="number" id="planEndChapter" min="1" required
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                   style="background-color: #fffef9;">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Description (optional)</label>
+                        <textarea id="planDescription" rows="3"
+                                  class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                  style="background-color: #fffef9;"
+                                  placeholder="Notes about this week's reading..."></textarea>
+                    </div>
+                </div>
+                <div class="flex gap-3 mt-6">
+                    <button type="submit" class="flex-1 btn-primary px-6 py-3 rounded-lg font-medium">
+                        Add Week
+                    </button>
+                    <button type="button" id="cancelPlanBtn" class="flex-1 btn-secondary px-6 py-3 rounded-lg font-medium">
+                        Cancel
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Add Prayer Request Modal -->
+    <div id="addPrayerModal" class="fixed inset-0 modal-overlay hidden items-center justify-center z-50">
+        <div class="bible-page rounded-xl p-8 max-w-lg w-full mx-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <h2 class="page-title text-2xl font-bold mb-6">
+                Add Prayer Request
+            </h2>
+            <form id="addPrayerForm">
+                <input type="hidden" id="prayerGroupId">
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Title *</label>
+                        <input type="text" id="prayerTitle" required maxlength="200"
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                               style="background-color: #fffef9;"
+                               placeholder="Brief summary of prayer request">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Prayer Request *</label>
+                        <textarea id="prayerContent" rows="6" required
+                                  class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                  style="background-color: #fffef9;"
+                                  placeholder="Share what you'd like prayer for..."></textarea>
+                    </div>
+                </div>
+                <div class="flex gap-3 mt-6">
+                    <button type="submit" class="btn-primary flex-1 py-3 px-6 rounded-lg font-medium">
+                        Add Prayer Request
+                    </button>
+                    <button type="button" onclick="closeAddPrayerModal()" 
+                            class="btn-secondary py-3 px-6 rounded-lg font-medium">
+                        Cancel
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Message modal functions
+        function showMessage(title, message) {
+            document.getElementById('messageTitle').textContent = title;
+            document.getElementById('messageText').textContent = message;
+            const modal = document.getElementById('messageModal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function closeMessage() {
+            const modal = document.getElementById('messageModal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        document.getElementById('closeMessageBtn').addEventListener('click', closeMessage);
+
+        // Check authentication
+        let currentUserId = null;
+        
+        async function checkAuth() {
+            try {
+                const response = await fetch('/api/user');
+                if (!response.ok) {
+                    window.location.href = '/login';
+                    return;
+                }
+                const data = await response.json();
+                if (!data.authenticated) {
+                    window.location.href = '/login';
+                    return;
+                }
+                currentUserId = data.id;
+            } catch (error) {
+                window.location.href = '/login';
+            }
+        }
+
+        // Logout
+        document.getElementById('logoutBtn').addEventListener('click', async () => {
+            await fetch('/api/auth/logout', { method: 'POST' });
+            window.location.href = '/login';
+        });
+
+        // Tab switching
+        const myGroupsTab = document.getElementById('myGroupsTab');
+        const invitesTab = document.getElementById('invitesTab');
+        const myGroupsView = document.getElementById('myGroupsView');
+        const invitesView = document.getElementById('invitesView');
+
+        myGroupsTab.addEventListener('click', () => {
+            myGroupsTab.classList.add('active');
+            invitesTab.classList.remove('active');
+            myGroupsView.classList.remove('hidden');
+            invitesView.classList.add('hidden');
+        });
+
+        invitesTab.addEventListener('click', () => {
+            invitesTab.classList.add('active');
+            myGroupsTab.classList.remove('active');
+            invitesView.classList.remove('hidden');
+            myGroupsView.classList.add('hidden');
+            loadInvites();
+        });
+
+        // Load groups
+        async function loadGroups() {
+            try {
+                const response = await fetch('/api/groups/list');
+                if (!response.ok) throw new Error('Failed to load groups');
+                const groups = await response.json();
+                
+                const groupsList = document.getElementById('groupsList');
+                if (!groups || groups.length === 0) {
+                    groupsList.innerHTML = '<p class="text-center py-12 text-lg" style="color: #8b7355;">No study groups yet. Create one to get started!</p>';
+                    return;
+                }
+
+                groupsList.innerHTML = groups.map(group => `
+                    <div class="group-card rounded-lg p-6">
+                        <div class="flex items-start gap-4 mb-4">
+                            ${group.logo_url ? 
+                                `<img src="${escapeHtml(group.logo_url)}" class="w-20 h-20 object-cover rounded-lg border-2 border-amber-200 flex-shrink-0" alt="${escapeHtml(group.name)} logo">` :
+                                '<div class="w-20 h-20 bg-amber-100 rounded-lg flex items-center justify-center text-3xl flex-shrink-0">📖</div>'}
+                            <div class="flex-1 min-w-0">
+                                <h3 class="text-2xl font-bold mb-2" style="color: #5d4e37; font-family: 'EB Garamond', Georgia, serif;">${escapeHtml(group.name)}</h3>
+                                <p class="text-sm mt-2" style="color: #8b7355;">Created ${new Date(group.created_at).toLocaleDateString()}</p>
+                            </div>
+                            <div class="flex gap-2 flex-shrink-0">
+                                <a href="/group?id=${group.id}" 
+                                   class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium">
+                                    View Group →
+                                </a>
+
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Error loading groups:', error);
+                document.getElementById('groupsList').innerHTML = 
+                    '<p class="text-red-700 text-center py-8">Failed to load groups. Please try again.</p>';
+            }
+        }
+
+        // Load members for a group
+        async function loadMembers(groupId) {
+            const membersDiv = document.getElementById(`members-${groupId}`);
+            
+            // Toggle visibility
+            if (!membersDiv.classList.contains('hidden')) {
+                membersDiv.classList.add('hidden');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/groups/${groupId}/members`);
+                if (!response.ok) throw new Error('Failed to load members');
+                const members = await response.json();
+                
+                membersDiv.innerHTML = `
+                    <div class="pt-3 border-t mt-3" style="border-color: #e5dcc8;">
+                        <p class="text-sm font-medium mb-2" style="color: #5d4e37;">Members (${members.length}):</p>
+                        <div class="space-y-2">
+                            ${members.map(m => `
+                                <div class="flex items-center gap-2 px-3 py-2 rounded-lg" style="background-color: #e5dcc8;">
+                                    ${getProfilePictureHTML(m, 'w-8 h-8', 'text-xs')}
+                                    <span class="text-sm" style="color: #5d4e37;">
+                                        ${escapeHtml(m.first_name)} ${escapeHtml(m.last_name)}${m.role === 'owner' ? ' (Owner)' : ''}${m.role === 'admin' ? ' (Admin)' : ''}
+                                    </span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+                membersDiv.classList.remove('hidden');
+            } catch (error) {
+                console.error('Error loading members:', error);
+            }
+        }
+        
+        // Load study plan for a group
+        async function loadStudyPlan(groupId) {
+            const planDiv = document.getElementById(`studyplan-${groupId}`);
+            
+            // Toggle visibility
+            if (!planDiv.classList.contains('hidden')) {
+                planDiv.classList.add('hidden');
+                return;
+            }
+            
+            try {
+                // Check if user is admin
+                const membersResponse = await fetch(`/api/groups/${groupId}/members`);
+                const members = await membersResponse.json();
+                const isAdmin = members.some(m => m.user_id === currentUserId && (m.role === 'admin' || m.role === 'owner'));
+                currentUserIsAdmin[groupId] = isAdmin;
+                
+                const response = await fetch(`/api/study-plans/list?group_id=${groupId}`);
+                if (!response.ok) throw new Error('Failed to load study plan');
+                const plans = await response.json();
+                
+                if (!plans || plans.length === 0) {
+                    planDiv.innerHTML = `
+                        <div class="pt-3 border-t mt-3" style="border-color: #e5dcc8;">
+                            <div class="flex justify-between items-center mb-2">
+                                <p class="text-sm" style="color: #8b7355;">No study plan yet for this group.</p>
+                                ${isAdmin ? `<button onclick="openAddPlanModal(${groupId})" class="px-3 py-1 bg-amber-700 text-white rounded text-xs hover:bg-amber-800">+ Add Week</button>` : ''}
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    planDiv.innerHTML = `
+                        <div class="pt-3 border-t mt-3" style="border-color: #e5dcc8;">
+                            <div class="flex justify-between items-center mb-3">
+                                <p class="text-sm font-medium" style="color: #5d4e37;">Weekly Reading Schedule:</p>
+                                ${isAdmin ? `<button onclick="openAddPlanModal(${groupId})" class="px-3 py-1 bg-amber-700 text-white rounded text-xs hover:bg-amber-800">+ Add Week</button>` : ''}
+                            </div>
+                            <div class="space-y-2">
+                                ${plans.map(plan => `
+                                    <div class="bg-amber-50 rounded-lg p-3 border border-amber-200">
+                                        <div class="flex justify-between items-start">
+                                            <div class="flex-1">
+                                                <p class="font-bold text-sm" style="color: #5d4e37;">Week ${plan.week_number}</p>
+                                                <p class="text-xs mt-1" style="color: #8b7355;">${plan.start_date} to ${plan.end_date}</p>
+                                                <p class="mt-2 font-medium" style="color: #654321;">${escapeHtml(plan.book)} ${plan.start_chapter}${plan.start_chapter !== plan.end_chapter ? `-${plan.end_chapter}` : ''}</p>
+                                                ${plan.description ? `<p class="text-xs mt-1" style="color: #8b7355;">${escapeHtml(plan.description)}</p>` : ''}
+                                            </div>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                planDiv.classList.remove('hidden');
+            } catch (error) {
+                console.error('Error loading study plan:', error);
+            }
+        }
+
+        // Load invites
+        async function loadInvites() {
+            try {
+                const response = await fetch('/api/groups/invites');
+                if (!response.ok) throw new Error('Failed to load invites');
+                const invites = await response.json();
+                
+                const invitesList = document.getElementById('invitesList');
+                if (!invites || invites.length === 0) {
+                    invitesList.innerHTML = '<p class="text-center py-12 text-lg" style="color: #8b7355;">No pending invites.</p>';
+                    return;
+                }
+
+                invitesList.innerHTML = invites.map(invite => `
+                    <div class="group-card rounded-lg p-6">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h3 class="text-xl font-bold" style="color: #5d4e37; font-family: 'EB Garamond', Georgia, serif;">${escapeHtml(invite.group_name)}</h3>
+                                <p class="text-sm mt-1" style="color: #8b7355;">Invited by ${escapeHtml(invite.invited_by_first_name)} ${escapeHtml(invite.invited_by_last_name)}</p>
+                                <p class="text-xs mt-1" style="color: #8b7355;">${new Date(invite.created_at).toLocaleDateString()}</p>
+                            </div>
+                            <div class="flex gap-2">
+                                <button onclick="acceptInvite(${invite.id})" 
+                                        class="px-4 py-2 bg-green-700 text-white rounded-lg hover:bg-green-800 transition font-medium">
+                                    Accept
+                                </button>
+                                <button onclick="declineInvite(${invite.id})" 
+                                        class="px-4 py-2 btn-secondary rounded-lg transition font-medium">
+                                    Decline
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Error loading invites:', error);
+                document.getElementById('invitesList').innerHTML = 
+                    '<p class="text-red-700 text-center py-8">Failed to load invites. Please try again.</p>';
+            }
+        }
+
+        // Accept invite
+        async function acceptInvite(inviteId) {
+            try {
+                const response = await fetch(`/api/groups/invites/${inviteId}/accept`, { method: 'POST' });
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(errorText || 'Failed to accept invite');
+                }
+                showMessage('Success', 'Invitation accepted successfully!');
+                loadInvites();
+                loadGroups();
+            } catch (error) {
+                console.error('Error accepting invite:', error);
+                showMessage('Error', 'Failed to accept invite: ' + error.message);
+            }
+        }
+
+        // Decline invite
+        async function declineInvite(inviteId) {
+            try {
+                const response = await fetch(`/api/groups/invites/${inviteId}/decline`, { method: 'POST' });
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(errorText || 'Failed to decline invite');
+                }
+                showMessage('Success', 'Invitation declined.');
+                loadInvites();
+            } catch (error) {
+                console.error('Error declining invite:', error);
+                showMessage('Error', 'Failed to decline invite: ' + error.message);
+            }
+        }
+
+        // Create group modal
+        const createGroupBtn = document.getElementById('createGroupBtn');
+        const createGroupModal = document.getElementById('createGroupModal');
+        const cancelCreateBtn = document.getElementById('cancelCreateBtn');
+        const createGroupForm = document.getElementById('createGroupForm');
+
+        let uploadedLogoURL = '';
+
+        createGroupBtn.addEventListener('click', () => {
+            createGroupModal.classList.remove('hidden');
+            createGroupModal.classList.add('flex');
+        });
+
+        cancelCreateBtn.addEventListener('click', () => {
+            createGroupModal.classList.add('hidden');
+            createGroupModal.classList.remove('flex');
+            createGroupForm.reset();
+            resetCreateGroupForm();
+        });
+        
+        // Add email input button
+        document.getElementById('addEmailBtn').addEventListener('click', () => {
+            const input = document.createElement('input');
+            input.type = 'email';
+            input.className = 'email-input w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent';
+            input.style.backgroundColor = '#fffef9';
+            input.placeholder = 'Email address';
+            document.getElementById('emailInputs').appendChild(input);
+        });
+        
+        // Logo preview and upload
+        document.getElementById('groupLogo').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            // Show preview
+            const preview = document.getElementById('logoPreview');
+            const previewImg = document.getElementById('logoPreviewImg');
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                previewImg.src = e.target.result;
+                preview.classList.remove('hidden');
+            };
+            reader.readAsDataURL(file);
+            
+            // Upload file
+            const formData = new FormData();
+            formData.append('logo', file);
+            
+            try {
+                const response = await fetch('/api/upload/logo', {
+                    method: 'POST',
+                    body: formData
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    uploadedLogoURL = data.url;
+                } else {
+                    showMessage('Error', 'Failed to upload logo');
+                }
+            } catch (error) {
+                console.error('Failed to upload logo:', error);
+                showMessage('Error', 'Failed to upload logo');
+            }
+        });
+        
+        function resetCreateGroupForm() {
+            document.getElementById('groupLogo').value = '';
+            document.getElementById('logoPreview').classList.add('hidden');
+            document.getElementById('emailInputs').innerHTML = '<input type="email" class="email-input w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent" style="background-color: #fffef9;" placeholder="Email address">';
+            uploadedLogoURL = '';
+        }
+
+        createGroupForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const name = document.getElementById('groupName').value.trim();
+            
+            if (!name) {
+                showMessage('Error', 'Please enter a group name');
+                return;
+            }
+            
+            // Collect email addresses
+            const emails = Array.from(document.querySelectorAll('.email-input'))
+                .map(input => input.value.trim())
+                .filter(email => email !== '');
+
+            try {
+                const response = await fetch('/api/groups/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        name: name,
+                        logo_url: uploadedLogoURL,
+                        invite_emails: emails
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(errorText || 'Failed to create group');
+                }
+                
+                createGroupModal.classList.add('hidden');
+                createGroupModal.classList.remove('flex');
+                createGroupForm.reset();
+                resetCreateGroupForm();
+                
+                const inviteMsg = emails.length > 0 ? ` Invitations sent to ${emails.length} email${emails.length > 1 ? 's' : ''}.` : '';
+                showMessage('Success', 'Group created successfully!' + inviteMsg);
+                loadGroups();
+            } catch (error) {
+                console.error('Error creating group:', error);
+                showMessage('Error', 'Failed to create group: ' + error.message);
+            }
+        });
+
+        // Invite member modal
+        const inviteMemberModal = document.getElementById('inviteMemberModal');
+        const cancelInviteBtn = document.getElementById('cancelInviteBtn');
+        const inviteMemberForm = document.getElementById('inviteMemberForm');
+
+        function openInviteModal(groupId) {
+            document.getElementById('inviteGroupId').value = groupId;
+            inviteMemberModal.classList.remove('hidden');
+            inviteMemberModal.classList.add('flex');
+        }
+
+        cancelInviteBtn.addEventListener('click', () => {
+            inviteMemberModal.classList.add('hidden');
+            inviteMemberModal.classList.remove('flex');
+            inviteMemberForm.reset();
+        });
+
+        inviteMemberForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const groupId = document.getElementById('inviteGroupId').value;
+            const username = document.getElementById('inviteUsername').value;
+
+            try {
+                const response = await fetch(`/api/groups/${groupId}/invite`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username })
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    let errorMsg;
+                    try {
+                        const errorData = JSON.parse(errorText);
+                        errorMsg = errorData.error || errorText;
+                    } catch {
+                        errorMsg = errorText;
+                    }
+                    throw new Error(errorMsg || 'Failed to send invite');
+                }
+                
+                inviteMemberModal.classList.add('hidden');
+                inviteMemberModal.classList.remove('flex');
+                inviteMemberForm.reset();
+                showMessage('Success', 'Invite sent successfully!');
+            } catch (error) {
+                console.error('Error sending invite:', error);
+                inviteMemberModal.classList.add('hidden');
+                inviteMemberModal.classList.remove('flex');
+                inviteMemberForm.reset();
+                showMessage('Error', error.message);
+            }
+        });
+
+        // Study plan modal
+        const addStudyPlanModal = document.getElementById('addStudyPlanModal');
+        const cancelPlanBtn = document.getElementById('cancelPlanBtn');
+        const addStudyPlanForm = document.getElementById('addStudyPlanForm');
+        
+        let currentPlanGroupId = null;
+        let currentUserIsAdmin = {};  // Track admin status per group
+
+        function openAddPlanModal(groupId) {
+            currentPlanGroupId = groupId;
+            document.getElementById('planGroupId').value = groupId;
+            addStudyPlanModal.classList.remove('hidden');
+            addStudyPlanModal.classList.add('flex');
+        }
+
+        cancelPlanBtn.addEventListener('click', () => {
+            addStudyPlanModal.classList.add('hidden');
+            addStudyPlanModal.classList.remove('flex');
+            addStudyPlanForm.reset();
+        });
+
+        addStudyPlanForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const data = {
+                group_id: parseInt(currentPlanGroupId),
+                week_number: parseInt(document.getElementById('planWeekNumber').value),
+                start_date: document.getElementById('planStartDate').value,
+                end_date: document.getElementById('planEndDate').value,
+                book: document.getElementById('planBook').value.trim(),
+                start_chapter: parseInt(document.getElementById('planStartChapter').value),
+                end_chapter: parseInt(document.getElementById('planEndChapter').value),
+                description: document.getElementById('planDescription').value.trim()
+            };
+
+            try {
+                const response = await fetch('/api/study-plans/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(errorText || 'Failed to add study plan');
+                }
+                
+                addStudyPlanModal.classList.add('hidden');
+                addStudyPlanModal.classList.remove('flex');
+                addStudyPlanForm.reset();
+                showMessage('Success', 'Study plan week added successfully!');
+                
+                // Reload the study plan
+                const planDiv = document.getElementById(`studyplan-${currentPlanGroupId}`);
+                planDiv.classList.add('hidden');
+                await loadStudyPlan(currentPlanGroupId);
+            } catch (error) {
+                console.error('Error adding study plan:', error);
+                addStudyPlanModal.classList.add('hidden');
+                addStudyPlanModal.classList.remove('flex');
+                addStudyPlanForm.reset();
+                showMessage('Error', 'Failed to add study plan: ' + error.message);
+            }
+        });
+
+        // ============ Prayer Request Functions ============
+        
+        let currentPrayerGroupId = null;
+
+        // Load prayer requests for a group
+        async function loadPrayerRequests(groupId) {
+            const prayersDiv = document.getElementById(`prayers-${groupId}`);
+            
+            // Toggle visibility
+            if (!prayersDiv.classList.contains('hidden')) {
+                prayersDiv.classList.add('hidden');
+                return;
+            }
+            
+            prayersDiv.innerHTML = '<div class="text-center py-4"><div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-700"></div></div>';
+            prayersDiv.classList.remove('hidden');
+            
+            try {
+                // Load active, answered, and archived prayers
+                const activeResponse = await fetch(`/api/prayers/group?group_id=${groupId}&status=active`);
+                const answeredResponse = await fetch(`/api/prayers/group?group_id=${groupId}&status=answered`);
+                const archivedResponse = await fetch(`/api/prayers/archived?group_id=${groupId}`);
+                
+                if (!activeResponse.ok || !answeredResponse.ok || !archivedResponse.ok) throw new Error('Failed to load prayer requests');
+                
+                const activePrayers = await activeResponse.json() || [];
+                const answeredPrayers = await answeredResponse.json() || [];
+                const archivedPrayers = await archivedResponse.json() || [];
+                
+                prayersDiv.innerHTML = `
+                    <div class="pt-3 border-t mt-3" style="border-color: #e5dcc8;">
+                        <div class="flex justify-between items-center mb-4">
+                            <p class="text-sm font-medium" style="color: #5d4e37;">Prayer Requests</p>
+                            <button onclick="openAddPrayerModal(${groupId})" 
+                                    class="px-3 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-xs font-medium">
+                                + Add Prayer
+                            </button>
+                        </div>
+                        
+                        ${activePrayers.length === 0 && answeredPrayers.length === 0 && archivedPrayers.length === 0 ? 
+                            '<p class="text-sm text-center py-4" style="color: #8b7355;">No prayer requests yet. Be the first to share!</p>' :
+                            `
+                            <!-- Active Prayers -->
+                            ${activePrayers.length > 0 ? `
+                                <div class="mb-4">
+                                    <h4 class="text-sm font-semibold mb-2 flex items-center gap-2" style="color: #5d4e37;">
+                                        <span class="inline-block w-2 h-2 bg-blue-500 rounded-full"></span>
+                                        Active (${activePrayers.length})
+                                    </h4>
+                                    <div class="space-y-2">
+                                        ${activePrayers.map(p => renderPrayerCard(p, groupId)).join('')}
+                                    </div>
+                                </div>
+                            ` : ''}
+                            
+                            <!-- Answered Prayers -->
+                            ${answeredPrayers.length > 0 ? `
+                                <div class="mb-4">
+                                    <h4 class="text-sm font-semibold mb-2 flex items-center gap-2" style="color: #5d4e37;">
+                                        <span class="inline-block w-2 h-2 bg-green-500 rounded-full"></span>
+                                        Answered (${answeredPrayers.length})
+                                    </h4>
+                                    <div class="space-y-2 opacity-75">
+                                        ${answeredPrayers.slice(0, 3).map(p => renderPrayerCard(p, groupId)).join('')}
+                                    </div>
+                                    ${answeredPrayers.length > 3 ? 
+                                        `<p class="text-xs text-center mt-2" style="color: #8b7355;">And ${answeredPrayers.length - 3} more answered prayers...</p>` : ''}
+                                </div>
+                            ` : ''}
+                            
+                            <!-- Archived Prayers -->
+                            ${archivedPrayers.length > 0 ? `
+                                <div>
+                                    <h4 class="text-sm font-semibold mb-2 flex items-center gap-2" style="color: #5d4e37;">
+                                        <span class="inline-block w-2 h-2 bg-gray-500 rounded-full"></span>
+                                        Archived (${archivedPrayers.length})
+                                    </h4>
+                                    <div class="space-y-2 opacity-60">
+                                        ${archivedPrayers.slice(0, 3).map(p => renderPrayerCard(p, groupId)).join('')}
+                                    </div>
+                                    ${archivedPrayers.length > 3 ? 
+                                        `<p class="text-xs text-center mt-2" style="color: #8b7355;">And ${archivedPrayers.length - 3} more archived prayers...</p>` : ''}
+                                </div>
+                            ` : ''}
+                            `
+                        }
+                    </div>
+                `;
+                
+                // Load reactions and encouragements for active and answered prayers only
+                const visiblePrayers = [...activePrayers, ...answeredPrayers];
+                if (visiblePrayers.length > 0) {
+                    setTimeout(() => {
+                        visiblePrayers.forEach(prayer => {
+                            loadReactions('prayer_request', prayer.id);
+                            loadPrayerEncouragements(prayer.id, groupId);
+                        });
+                    }, 0);
+                }
+                // Archived prayers load on demand when expanded
+            } catch (error) {
+                console.error('Error loading prayer requests:', error);
+                prayersDiv.innerHTML = '<p class="text-red-600 text-sm py-2">Failed to load prayers</p>';
+            }
+        }
+
+        // Render a prayer card
+        function renderPrayerCard(prayer, groupId) {
+            const isArchived = !!prayer.archived_at;
+            let statusBadge = '';
+            
+            if (isArchived && prayer.status === 'answered') {
+                statusBadge = '<span class="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">✓ Answered (Archived)</span>';
+            } else if (isArchived) {
+                statusBadge = '<span class="px-2 py-0.5 bg-gray-100 text-gray-700 text-xs rounded-full">📦 Archived</span>';
+            } else if (prayer.status === 'answered') {
+                statusBadge = '<span class="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full">✓ Answered</span>';
+            } else {
+                statusBadge = '<span class="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs rounded-full">🙏 Active</span>';
+            }
+            
+            const isOwn = prayer.user_id === currentUserId;
+            // Check if user can restore (author or admin/owner)
+            const userGroup = userGroups.find(g => g.id === groupId);
+            const isAdminOrOwner = userGroup && (userGroup.role === 'admin' || userGroup.role === 'owner');
+            const canRestore = isArchived && (isOwn || isAdminOrOwner);
+            
+            // Archived prayers show compact view
+            if (isArchived) {
+                return `
+                    <div class="p-2 rounded-lg border cursor-pointer hover:bg-gray-50" style="border-color: #e5dcc8; background-color: #fffef9;" onclick="toggleArchivedPrayerInGroup(${prayer.id}, ${groupId})">
+                        <div class="flex items-center gap-2">
+                            ${getProfilePictureHTML(prayer, 'w-6 h-6', 'text-xs')}
+                            <div class="flex-1 min-w-0">
+                                <div class="flex items-center gap-2">
+                                    <p class="text-xs font-semibold truncate" style="color: #5d4e37;">${escapeHtml(prayer.title)}</p>
+                                    ${statusBadge}
+                                </div>
+                                <p class="text-xs" style="color: #8b7355;">${escapeHtml(prayer.first_name)} ${escapeHtml(prayer.last_name)} • ${new Date(prayer.created_at).toLocaleDateString()}</p>
+                            </div>
+                        </div>
+                        <div id="archived-details-${prayer.id}" class="hidden mt-2 pt-2 border-t" style="border-color: #e5dcc8;" onclick="event.stopPropagation()">
+                            <p class="text-sm mb-2 whitespace-pre-wrap" style="color: #5d4e37;">${escapeHtml(prayer.content)}</p>
+                            ${prayer.answer_explanation ? `
+                                <div class="mb-2 p-3 rounded-lg" style="background-color: #f0f9ff; border-left: 4px solid #22c55e;">
+                                    <p class="text-xs font-semibold mb-1" style="color: #15803d;">✓ How God Answered:</p>
+                                    <p class="text-sm whitespace-pre-wrap" style="color: #166534;">${escapeHtml(prayer.answer_explanation)}</p>
+                                </div>
+                            ` : ''}
+                            <div id="reactions-prayer_request-${prayer.id}" class="flex flex-wrap gap-1 items-center mb-2">
+                                <span class="text-xs" style="color: #8b7355;">Loading reactions...</span>
+                            </div>
+                            <div class="flex gap-2 mb-2">
+                                ${prayer.status !== 'answered' ? `
+                                    <button onclick="openMarkAnsweredModal(${prayer.id}, ${groupId})" 
+                                            class="text-xs px-2 py-1 bg-green-50 text-green-700 rounded hover:bg-green-100 transition whitespace-nowrap">
+                                        ✓ Mark Answered
+                                    </button>
+                                ` : (isOwn || isAdminOrOwner) ? `
+                                    ${prayer.answer_explanation ? `
+                                        <button onclick="openEditAnswerModalInGroup(${prayer.id}, ${groupId}, ${JSON.stringify(prayer.answer_explanation || '').replace(/"/g, '&quot;')})" 
+                                                class="text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 transition whitespace-nowrap">
+                                            ✏️ Edit Answer
+                                        </button>
+                                    ` : ''}
+                                    <button onclick="markAsUnansweredInGroup(${prayer.id}, ${groupId})" 
+                                            class="text-xs px-2 py-1 bg-red-50 text-red-700 rounded hover:bg-red-100 transition whitespace-nowrap">
+                                        ✗ Unanswered
+                                    </button>
+                                ` : ''}
+                                ${canRestore ? `
+                                    <button onclick="restorePrayer(${prayer.id}, ${groupId})" 
+                                            class="text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 transition whitespace-nowrap">
+                                        ↻ Restore
+                                    </button>
+                                ` : ''}
+                            </div>
+                            <div id="prayer-details-${prayer.id}">
+                                <p class="text-xs text-center py-2" style="color: #8b7355;">Loading encouragements...</p>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            // Active and answered prayers show full view
+            return `
+                <div class="p-3 rounded-lg border" style="border-color: #e5dcc8; background-color: #fffef9;">
+                    <div class="flex items-start justify-between gap-2 mb-2">
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2 mb-1">
+                                <p class="text-sm font-semibold" style="color: #5d4e37;">${escapeHtml(prayer.title)}</p>
+                                ${statusBadge}
+                            </div>
+                            <div class="flex items-center gap-2 mb-1">
+                                ${getProfilePictureHTML(prayer, 'w-6 h-6', 'text-xs')}
+                                <p class="text-xs" style="color: #8b7355;">${escapeHtml(prayer.first_name)} ${escapeHtml(prayer.last_name)} • ${new Date(prayer.created_at).toLocaleDateString()}</p>
+                            </div>
+                        </div>
+                        <div class="flex gap-2">
+                            ${isOwn && prayer.status === 'active' ? `
+                                <button onclick="openMarkAnsweredModal(${prayer.id}, ${groupId})" 
+                                        class="text-xs px-2 py-1 bg-green-50 text-green-700 rounded hover:bg-green-100 transition whitespace-nowrap">
+                                    ✓ Mark Answered
+                                </button>
+                            ` : ''}
+                            ${(isOwn || isAdminOrOwner) && prayer.status === 'active' ? `
+                                <button onclick="archivePrayer(${prayer.id}, ${groupId})" 
+                                        class="text-xs px-2 py-1 bg-gray-50 text-gray-700 rounded hover:bg-gray-100 transition whitespace-nowrap">
+                                    📦 Archive
+                                </button>
+                            ` : ''}
+                            ${(isOwn || isAdminOrOwner) && prayer.status === 'answered' ? `
+                                <button onclick="openEditAnswerModalInGroup(${prayer.id}, ${groupId}, ${JSON.stringify(prayer.answer_explanation || '').replace(/"/g, '&quot;')})" 
+                                        class="text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 transition whitespace-nowrap">
+                                    ✏️ Edit Answer
+                                </button>
+                                <button onclick="markAsUnansweredInGroup(${prayer.id}, ${groupId})" 
+                                        class="text-xs px-2 py-1 bg-red-50 text-red-700 rounded hover:bg-red-100 transition whitespace-nowrap">
+                                    ✗ Mark as Unanswered
+                                </button>
+                                <button onclick="archivePrayer(${prayer.id}, ${groupId})" 
+                                        class="text-xs px-2 py-1 bg-gray-50 text-gray-700 rounded hover:bg-gray-100 transition whitespace-nowrap">
+                                    📦 Archive
+                                </button>
+                            ` : ''}
+                        </div>
+                    </div>
+                    <p class="text-sm mb-2 whitespace-pre-wrap" style="color: #5d4e37;">${escapeHtml(prayer.content)}</p>
+                    ${prayer.answer_explanation ? `
+                        <div class="mb-2 p-3 rounded-lg" style="background-color: #f0f9ff; border-left: 4px solid #22c55e;">
+                            <p class="text-xs font-semibold mb-1" style="color: #15803d;">✓ How God Answered:</p>
+                            <p class="text-sm whitespace-pre-wrap" style="color: #166534;">${escapeHtml(prayer.answer_explanation)}</p>
+                        </div>
+                    ` : ''}
+                    <div id="reactions-prayer_request-${prayer.id}" class="flex flex-wrap gap-1 items-center mb-2">
+                        <span class="text-xs" style="color: #8b7355;">Loading reactions...</span>
+                    </div>
+                    <div id="prayer-details-${prayer.id}" class="mt-2 pt-2 border-t" style="border-color: #e5dcc8;">
+                        <p class="text-xs text-center py-2" style="color: #8b7355;">Loading encouragements...</p>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Toggle archived prayer details in groups list
+        function toggleArchivedPrayerInGroup(prayerId, groupId) {
+            const detailsDiv = document.getElementById(`archived-details-${prayerId}`);
+            const wasHidden = detailsDiv.classList.contains('hidden');
+            
+            if (wasHidden) {
+                detailsDiv.classList.remove('hidden');
+                // Load reactions and encouragements when expanding
+                loadReactions('prayer_request', prayerId);
+                loadPrayerEncouragements(prayerId, groupId);
+            } else {
+                detailsDiv.classList.add('hidden');
+            }
+        }
+
+        // Load prayer encouragements
+        async function loadPrayerEncouragements(prayerId, groupId) {
+            const detailsDiv = document.getElementById(`prayer-details-${prayerId}`);
+            if (!detailsDiv) return;
+            
+            detailsDiv.innerHTML = '<div class="text-center py-2"><div class="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-blue-700"></div></div>';
+            
+            try {
+                // Load prayer comments
+                const commentsResponse = await fetch(`/api/prayers/${prayerId}/comments`);
+                
+                if (!commentsResponse.ok) throw new Error('Failed to load encouragements');
+                
+                const comments = await commentsResponse.json() || [];
+                
+                detailsDiv.innerHTML = `
+                    <div class="space-y-3">
+                        <!-- Comments -->
+                        <div>
+                            <p class="text-sm font-medium mb-2" style="color: #5d4e37;">Encouragements (${comments.length})</p>
+                            <div class="space-y-2 max-h-40 overflow-y-auto">${comments.length === 0 ? 
+                                    '<p class="text-xs text-center py-2" style="color: #8b7355;">No encouragements yet</p>' :
+                                    comments.map(c => `
+                                        <div class="p-2 rounded" style="background-color: #f5f1e8;">
+                                            <div class="flex items-start gap-2">
+                                                ${getProfilePictureHTML(c, 'w-6 h-6', 'text-xs')}
+                                                <div class="flex-1 min-w-0">
+                                                    <p class="text-xs font-medium" style="color: #5d4e37;">${escapeHtml(c.first_name)} ${escapeHtml(c.last_name)}</p>
+                                                    <p class="text-xs mt-1" style="color: #5d4e37;">${escapeHtml(c.content)}</p>
+                                                    <p class="text-xs mt-1" style="color: #8b7355;">${new Date(c.created_at).toLocaleString()}</p>
+                                                    <div id="reactions-prayer_comment-${c.id}" class="flex flex-wrap gap-1 items-center mt-1">
+                                                        <span class="text-xs" style="color: #8b7355;">Loading...</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    `).join('')
+                                }
+                            </div>
+                        </div>
+                        
+                        <!-- Add Comment Form -->
+                        <form onsubmit="addPrayerComment(event, ${prayerId}, ${groupId})" class="flex gap-2">
+                            <input type="text" 
+                                   id="comment-input-${prayerId}" 
+                                   placeholder="Add your encouragement..." 
+                                   required
+                                   class="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                   style="background-color: #fffef9;">
+                            <button type="submit" 
+                                    class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium whitespace-nowrap">
+                                Encourage
+                            </button>
+                        </form>
+                    </div>
+                `;
+                
+                // Load reactions for each comment
+                if (comments.length > 0) {
+                    setTimeout(() => {
+                        comments.forEach(c => {
+                            loadReactions('prayer_comment', c.id);
+                        });
+                    }, 0);
+                }
+            } catch (error) {
+                console.error('Error loading prayer details:', error);
+                detailsDiv.innerHTML = '<p class="text-red-600 text-xs py-2">Failed to load details</p>';
+            }
+        }
+
+        // Add prayer comment
+        async function addPrayerComment(event, prayerId, groupId) {
+            event.preventDefault();
+            const input = document.getElementById(`comment-input-${prayerId}`);
+            const content = input.value.trim();
+            
+            if (!content) return;
+            
+            try {
+                const response = await fetch(`/api/prayers/${prayerId}/comments`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content })
+                });
+                
+                if (!response.ok) throw new Error('Failed to add comment');
+                
+                input.value = '';
+                // Reload encouragements to show new comment
+                await loadPrayerEncouragements(prayerId, groupId);
+            } catch (error) {
+                console.error('Error adding comment:', error);
+                showMessage('Error', 'Failed to add comment');
+            }
+        }
+
+        // Open mark as answered modal
+        function openMarkAnsweredModal(prayerId, groupId) {
+            document.getElementById('answeredPrayerId').value = prayerId;
+            document.getElementById('answeredPrayerGroupId').value = groupId;
+            document.getElementById('answerExplanation').value = '';
+            document.getElementById('markAnsweredModal').classList.remove('hidden');
+            document.getElementById('markAnsweredModal').classList.add('flex');
+        }
+
+        // Close mark as answered modal
+        function closeMarkAnsweredModal() {
+            document.getElementById('markAnsweredModal').classList.add('hidden');
+            document.getElementById('markAnsweredModal').classList.remove('flex');
+        }
+
+        // Mark prayer as answered
+        async function markPrayerAnswered(prayerId, groupId) {
+            try {
+                const response = await fetch(`/api/prayers/${prayerId}/status`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: 'answered' })
+                });
+                
+                if (!response.ok) throw new Error('Failed to update status');
+                
+                showMessage('Success', 'Prayer marked as answered! Praise God!');
+                // Reload prayers
+                const prayersDiv = document.getElementById(`prayers-${groupId}`);
+                prayersDiv.classList.add('hidden');
+                await loadPrayerRequests(groupId);
+            } catch (error) {
+                console.error('Error marking prayer answered:', error);
+                showMessage('Error', 'Failed to update prayer status');
+            }
+        }
+
+        async function archivePrayer(prayerId, groupId) {
+            try {
+                const response = await fetch(`/api/prayers/${prayerId}/archive`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                if (!response.ok) throw new Error('Failed to archive prayer');
+                
+                showMessage('Success', 'Prayer request archived.');
+                // Reload prayers
+                const prayersDiv = document.getElementById(`prayers-${groupId}`);
+                prayersDiv.classList.add('hidden');
+                await loadPrayerRequests(groupId);
+            } catch (error) {
+                console.error('Error archiving prayer:', error);
+                showMessage('Error', 'Failed to archive prayer request');
+            }
+        }
+
+        async function restorePrayer(prayerId, groupId) {
+            try {
+                const response = await fetch(`/api/prayers/${prayerId}/restore`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(errorText || 'Failed to restore prayer');
+                }
+                
+                showMessage('Success', 'Prayer restored! It will now be active for 2 more weeks.');
+                // Reload prayers
+                const prayersDiv = document.getElementById(`prayers-${groupId}`);
+                prayersDiv.classList.add('hidden');
+                await loadPrayerRequests(groupId);
+            } catch (error) {
+                console.error('Error restoring prayer:', error);
+                showMessage('Error', error.message || 'Failed to restore prayer');
+            }
+        }
+
+        // Mark prayer as unanswered in group (clear answer and set to active)
+        async function markAsUnansweredInGroup(prayerId, groupId) {
+            try {
+                const response = await fetch(`/api/prayers/${prayerId}/unanswered`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to mark prayer as unanswered');
+                }
+                
+                showMessage('Success', 'Prayer marked as unanswered and returned to active status.');
+                // Reload prayers
+                const prayersDiv = document.getElementById(`prayers-${groupId}`);
+                prayersDiv.classList.add('hidden');
+                await loadPrayerRequests(groupId);
+            } catch (error) {
+                console.error('Error marking prayer as unanswered:', error);
+                showMessage('Error', 'Failed to mark prayer as unanswered');
+            }
+        }
+
+        // Open add prayer modal
+        function openAddPrayerModal(groupId) {
+            currentPrayerGroupId = groupId;
+            document.getElementById('prayerGroupId').value = groupId;
+            const modal = document.getElementById('addPrayerModal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        // Close add prayer modal
+        function closeAddPrayerModal() {
+            const modal = document.getElementById('addPrayerModal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+            document.getElementById('addPrayerForm').reset();
+        }
+
+        // Add prayer form submission
+        const addPrayerForm = document.getElementById('addPrayerForm');
+        addPrayerForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const data = {
+                group_id: parseInt(currentPrayerGroupId),
+                title: document.getElementById('prayerTitle').value.trim(),
+                content: document.getElementById('prayerContent').value.trim()
+            };
+
+            try {
+                const response = await fetch('/api/prayers/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(errorText || 'Failed to add prayer request');
+                }
+                
+                closeAddPrayerModal();
+                showMessage('Success', 'Prayer request added! Your group will be notified.');
+                
+                // Reload the prayers
+                const prayersDiv = document.getElementById(`prayers-${currentPrayerGroupId}`);
+                prayersDiv.classList.add('hidden');
+                await loadPrayerRequests(currentPrayerGroupId);
+            } catch (error) {
+                console.error('Error adding prayer request:', error);
+                closeAddPrayerModal();
+                showMessage('Error', 'Failed to add prayer request: ' + error.message);
+            }
+        });
+
+        // Mark as answered form submission
+        const markAnsweredForm = document.getElementById('markAnsweredForm');
+        markAnsweredForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const prayerId = parseInt(document.getElementById('answeredPrayerId').value);
+            const groupId = parseInt(document.getElementById('answeredPrayerGroupId').value);
+            const answerExplanation = document.getElementById('answerExplanation').value.trim();
+
+            try {
+                const response = await fetch(`/api/prayers/${prayerId}/status`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        status: 'answered',
+                        answer_explanation: answerExplanation
+                    })
+                });
+                
+                if (!response.ok) throw new Error('Failed to update status');
+                
+                closeMarkAnsweredModal();
+                showMessage('Success', 'Prayer marked as answered! Praise God!');
+                
+                // Reload prayers
+                const prayersDiv = document.getElementById(`prayers-${groupId}`);
+                prayersDiv.classList.add('hidden');
+                await loadPrayerRequests(groupId);
+            } catch (error) {
+                console.error('Error marking prayer answered:', error);
+                closeMarkAnsweredModal();
+                showMessage('Error', 'Failed to update prayer status');
+            }
+        });
+
+        // Cancel mark as answered
+        const cancelAnsweredBtn = document.getElementById('cancelAnsweredBtn');
+        cancelAnsweredBtn.addEventListener('click', closeMarkAnsweredModal);
+
+        // Open edit answer modal in groups page
+        function openEditAnswerModalInGroup(prayerId, groupId, currentAnswer) {
+            document.getElementById('editAnswerPrayerId').value = prayerId;
+            document.getElementById('editAnswerPrayerGroupId').value = groupId;
+            document.getElementById('editAnswerExplanation').value = currentAnswer || '';
+            document.getElementById('editAnswerModal').classList.remove('hidden');
+            document.getElementById('editAnswerModal').classList.add('flex');
+        }
+
+        // Close edit answer modal
+        function closeEditAnswerModal() {
+            document.getElementById('editAnswerModal').classList.remove('flex');
+            document.getElementById('editAnswerModal').classList.add('hidden');
+        }
+
+        // Edit answer form submission
+        const editAnswerForm = document.getElementById('editAnswerForm');
+        editAnswerForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const prayerId = parseInt(document.getElementById('editAnswerPrayerId').value);
+            const groupId = parseInt(document.getElementById('editAnswerPrayerGroupId').value);
+            const answerExplanation = document.getElementById('editAnswerExplanation').value.trim();
+
+            try {
+                const response = await fetch(`/api/prayers/${prayerId}/answer`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ answer_explanation: answerExplanation })
+                });
+                
+                if (!response.ok) throw new Error('Failed to update answer');
+                
+                closeEditAnswerModal();
+                showMessage('Success', 'Answer explanation updated!');
+                
+                // Reload prayers
+                const prayersDiv = document.getElementById(`prayers-${groupId}`);
+                prayersDiv.classList.add('hidden');
+                await loadPrayerRequests(groupId);
+            } catch (error) {
+                console.error('Error updating answer:', error);
+                closeEditAnswerModal();
+                showMessage('Error', 'Failed to update answer explanation');
+            }
+        });
+
+        // Cancel button for edit answer modal
+        document.getElementById('cancelEditAnswerBtn').addEventListener('click', closeEditAnswerModal);
+
+        // Close prayer modal on Escape key or outside click
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                const modal = document.getElementById('addPrayerModal');
+                if (!modal.classList.contains('hidden')) {
+                    closeAddPrayerModal();
+                }
+            }
+        });
+
+        document.getElementById('addPrayerModal').addEventListener('click', (e) => {
+            if (e.target.id === 'addPrayerModal') {
+                closeAddPrayerModal();
+            }
+        });
+
+        // Utility function
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        // Helper function to generate profile picture HTML
+        function getProfilePictureHTML(user, size = 'w-8 h-8', textSize = 'text-xs') {
+            if (user.profile_picture_url) {
+                return `<img src="${escapeHtml(user.profile_picture_url)}" class="${size} rounded-full object-cover flex-shrink-0" alt="Profile">`;
+            }
+            
+            const initials = user.first_name && user.last_name 
+                ? (user.first_name[0] + user.last_name[0]).toUpperCase() 
+                : user.username[0].toUpperCase();
+            
+            return `<div class="${size} rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white ${textSize} font-bold flex-shrink-0">${initials}</div>`;
+        }
+
+        // Reactions functionality
+        const COMMON_EMOJIS = ['👍', '❤️', '🙏', '😊', '🎉', '👏'];
+
+        // Load and display reactions for a target
+        async function loadReactions(targetType, targetId) {
+            const container = document.getElementById(`reactions-${targetType}-${targetId}`);
+            if (!container) return;
+
+            try {
+                const response = await fetch(`/api/reactions/summary?target_type=${targetType}&target_id=${targetId}`);
+                if (!response.ok) throw new Error('Failed to load reactions');
+                
+                const reactions = await response.json() || [];
+                renderReactions(targetType, targetId, reactions);
+            } catch (error) {
+                console.error('Error loading reactions:', error);
+                container.innerHTML = '';
+            }
+        }
+
+        // Render reactions display
+        function renderReactions(targetType, targetId, reactions) {
+            const container = document.getElementById(`reactions-${targetType}-${targetId}`);
+            if (!container) return;
+
+            let html = '';
+            
+            // Display existing reactions
+            if (reactions && reactions.length > 0) {
+                reactions.forEach(r => {
+                    const buttonClass = r.has_reacted 
+                        ? 'bg-blue-100 border-blue-400 text-blue-800' 
+                        : 'bg-gray-100 border-gray-300 text-gray-700 hover:bg-gray-200';
+                    
+                    html += `
+                        <button onclick="toggleReaction('${targetType}', ${targetId}, '${r.emoji}')" 
+                                class="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs border transition ${buttonClass}"
+                                title="${r.count} ${r.count === 1 ? 'person' : 'people'}">
+                            <span>${r.emoji}</span>
+                            <span class="font-medium">${r.count}</span>
+                        </button>
+                    `;
+                });
+            }
+            
+            // Add reaction button
+            html += `
+                <button onclick="showReactionPicker('${targetType}', ${targetId}, event)" 
+                        class="inline-flex items-center px-2 py-1 rounded-full text-xs border border-gray-300 bg-white hover:bg-gray-100 transition"
+                        title="Add reaction">
+                    <span>😊➕</span>
+                </button>
+            `;
+            
+            container.innerHTML = html;
+        }
+
+        // Toggle a reaction
+        async function toggleReaction(targetType, targetId, emoji) {
+            try {
+                const response = await fetch('/api/reactions/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        target_type: targetType,
+                        target_id: targetId,
+                        emoji: emoji
+                    })
+                });
+
+                if (!response.ok) throw new Error('Failed to toggle reaction');
+                
+                const reactions = await response.json();
+                renderReactions(targetType, targetId, reactions);
+            } catch (error) {
+                console.error('Error toggling reaction:', error);
+            }
+        }
+
+        // Show reaction picker
+        function showReactionPicker(targetType, targetId, event) {
+            event.stopPropagation();
+            
+            // Remove any existing picker
+            const existingPicker = document.querySelector('.reaction-picker');
+            if (existingPicker) existingPicker.remove();
+            
+            // Create picker
+            const picker = document.createElement('div');
+            picker.className = 'reaction-picker absolute z-50 bg-white rounded-lg shadow-xl p-2 flex gap-1 border border-gray-200';
+            picker.style.cssText = 'margin-top: -40px;';
+            
+            COMMON_EMOJIS.forEach(emoji => {
+                const btn = document.createElement('button');
+                btn.textContent = emoji;
+                btn.className = 'text-2xl hover:scale-125 transition p-1 rounded hover:bg-gray-100';
+                btn.onclick = async () => {
+                    await toggleReaction(targetType, targetId, emoji);
+                    picker.remove();
+                };
+                picker.appendChild(btn);
+            });
+            
+            // Position and show picker
+            const button = event.target.closest('button');
+            button.parentElement.style.position = 'relative';
+            button.parentElement.appendChild(picker);
+            
+            // Close picker on outside click
+            setTimeout(() => {
+                document.addEventListener('click', function closePicker(e) {
+                    if (!picker.contains(e.target)) {
+                        picker.remove();
+                        document.removeEventListener('click', closePicker);
+                    }
+                });
+            }, 0);
+        }
+
+        // Initialize
+        checkAuth();
+        loadGroups();
+    </script>
+</body>
+</html>

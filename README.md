@@ -2,6 +2,8 @@
 
 A web-based Bible reading application built with Go and JavaScript, using SWORD/Crosswire zText format files.
 
+**[Read the Bible at bible.soh.re →](https://bible.soh.re/)**
+
 ## Features
 
 - Browse all books of the Bible (Old and New Testament)

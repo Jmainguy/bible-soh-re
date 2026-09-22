@@ -28,18 +28,13 @@ type VerseComment struct {
 
 // CreateVerseComment creates a new verse comment
 func (d *Database) CreateVerseComment(groupID sql.NullInt64, userID int64, book string, chapter, verse int, parentID sql.NullInt64, content string) (*VerseComment, error) {
-	result, err := d.db.Exec(
+	id, err := d.insert(
 		`INSERT INTO verse_comments (group_id, user_id, book, chapter, verse, parent_id, content) 
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		groupID, userID, book, chapter, verse, parentID, content,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create verse comment: %w", err)
-	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get last insert ID: %w", err)
 	}
 
 	return d.GetVerseComment(id)
@@ -65,7 +60,7 @@ func (d *Database) GetVerseComment(id int64) (*VerseComment, error) {
 }
 
 // GetVerseComments retrieves comments for a specific verse, optionally filtered by group
-func (d *Database) GetVerseComments(book string, chapter, verse int, groupID sql.NullInt64) ([]*VerseComment, error) {
+func (d *Database) GetVerseComments(book string, chapter, verse int, groupID sql.NullInt64, userID int64) ([]*VerseComment, error) {
 	var query string
 	var args []interface{}
 
@@ -84,9 +79,9 @@ func (d *Database) GetVerseComments(book string, chapter, verse int, groupID sql
 		                vc.content, vc.created_at, vc.updated_at, u.username, u.first_name, u.last_name, u.profile_picture_url
 		         FROM verse_comments vc
 		         INNER JOIN users u ON vc.user_id = u.id
-		         WHERE vc.book = ? AND vc.chapter = ? AND vc.verse = ? AND vc.group_id IS NULL
+		         WHERE vc.book = ? AND vc.chapter = ? AND vc.verse = ? AND vc.group_id IS NULL AND vc.user_id = ?
 		         ORDER BY vc.created_at ASC`
-		args = []interface{}{book, chapter, verse}
+		args = []interface{}{book, chapter, verse, userID}
 	}
 
 	rows, err := d.db.Query(query, args...)

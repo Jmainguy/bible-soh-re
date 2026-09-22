@@ -7,3 +7,5 @@ bible.db-shm
 bible.db-wal
 static/uploads/
 tmp
+
+node_modules/

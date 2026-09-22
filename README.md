@@ -24,3 +24,11 @@ A web-based Bible reading application built with Go and JavaScript, using SWORD/
 
 - `←` (Left Arrow) - Previous chapter
 - `→` (Right Arrow) - Next chapter
+
+### Frontend styles
+
+Run `npm ci && npm run build:css` after changing HTML or JavaScript classes.
+Commit `static/tailwind.css` alongside those changes; Go embeds it in the binary.
+Tailwind 3 preserves the existing CDN styling without a major-version migration.
+
+For an alternate local port, set `LISTEN_ADDR=127.0.0.1:8081` when starting the server.

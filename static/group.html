@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Study Group - Bible Study</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="icon" type="image/png" href="/brand-bible.png">
+    <link rel="stylesheet" href="/tailwind.css">
     <style>
         .bible-page {
             background-color: #fffef9;
@@ -55,6 +55,7 @@
             color: #5d4e37;
         }
     </style>
+    <link rel="stylesheet" href="/brand.css">
 </head>
 <body class="bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-50 min-h-screen">
     <div class="container mx-auto px-4 py-8 max-w-6xl">
@@ -68,7 +69,7 @@
                     Back to Groups
                 </a>
                 <div class="flex gap-2">
-                    <button id="inviteMemberBtn" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium">
+                    <button id="inviteMemberBtn" class="hidden px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium">
                         + Invite Member
                     </button>
                     <button id="logoutBtn" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition text-sm">
@@ -123,7 +124,7 @@
                 <div id="studyplanTab" class="tab-content hidden">
                     <div class="flex justify-between items-center mb-4">
                         <h2 class="text-xl font-bold" style="color: #5d4e37;">Study Plan</h2>
-                        <button id="createStudyPlanBtn" class="btn-primary px-4 py-2 rounded-lg text-sm font-medium">
+                        <button id="createStudyPlanBtn" class="hidden btn-primary px-4 py-2 rounded-lg text-sm font-medium">
                             + Create Study Plan
                         </button>
                     </div>
@@ -135,7 +136,77 @@
         </div>
     </div>
 
-    <!-- Modals (reuse from groups.html) -->
+    <div id="addStudyPlanModal" class="fixed inset-0 modal-overlay hidden items-center justify-center z-50">
+        <div class="bible-page rounded-xl p-8 max-w-lg w-full mx-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <h2 class="page-title text-2xl font-bold mb-6">
+                Add Study Plan Week
+            </h2>
+            <form id="addStudyPlanForm">
+                <input type="hidden" id="planGroupId">
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Week Number *</label>
+                        <input type="number" id="planWeekNumber" min="1" required
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                               style="background-color: #fffef9;">
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Start Date *</label>
+                            <input type="date" id="planStartDate" required
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                   style="background-color: #fffef9;">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">End Date *</label>
+                            <input type="date" id="planEndDate" required
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                   style="background-color: #fffef9;">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Book *</label>
+                        <input type="text" id="planBook" required
+                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                               style="background-color: #fffef9;"
+                               placeholder="e.g., Genesis">
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Start Chapter *</label>
+                            <input type="number" id="planStartChapter" min="1" required
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                   style="background-color: #fffef9;">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">End Chapter *</label>
+                            <input type="number" id="planEndChapter" min="1" required
+                                   class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                   style="background-color: #fffef9;">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium mb-2" style="color: #5d4e37;">Description (optional)</label>
+                        <textarea id="planDescription" rows="3"
+                                  class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                  style="background-color: #fffef9;"
+                                  placeholder="Notes about this week's reading..."></textarea>
+                    </div>
+                </div>
+                <div class="flex gap-3 mt-6">
+                    <button type="submit" class="flex-1 btn-primary px-6 py-3 rounded-lg font-medium">
+                        Add Week
+                    </button>
+                    <button type="button" id="cancelPlanBtn" class="flex-1 btn-secondary px-6 py-3 rounded-lg font-medium">
+                        Cancel
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+
+    <!-- Group forms -->
     <!-- Invite Member Modal -->
     <div id="inviteMemberModal" class="fixed inset-0 modal-overlay hidden items-center justify-center z-50">
         <div class="bible-page rounded-xl p-8 max-w-md w-full mx-4 shadow-2xl">
@@ -319,7 +390,7 @@
                 
                 if (group.logo_url) {
                     document.getElementById('groupLogoContainer').innerHTML = 
-                        `<img src="${group.logo_url}" class="w-full h-full object-cover rounded-lg" alt="${escapeHtml(group.name)} logo">`;
+                        `<img src="${escapeHtml(group.logo_url)}" class="w-full h-full object-cover rounded-lg" alt="${escapeHtml(group.name)} logo">`;
                 }
             } catch (error) {
                 console.error('Error loading group:', error);
@@ -359,6 +430,8 @@
                 
                 // Check if current user is admin or owner
                 currentUserIsAdmin = members.some(m => m.user_id === currentUserId && (m.role === 'admin' || m.role === 'owner'));
+                document.getElementById('createStudyPlanBtn').classList.toggle('hidden', !currentUserIsAdmin);
+                document.getElementById('inviteMemberBtn').classList.toggle('hidden', !currentUserIsAdmin);
                 
                 const membersList = document.getElementById('membersList');
                 membersList.innerHTML = members.map(m => `
@@ -485,7 +558,7 @@
                                 <span class="text-xs" style="color: #8b7355;">Loading reactions...</span>
                             </div>
                             <div class="flex gap-3 mb-3">
-                                ${prayer.status !== 'answered' ? `
+                                ${prayer.status !== 'answered' && (prayer.user_id === currentUserId || currentUserIsAdmin) ? `
                                     <button onclick="openMarkAnsweredModal(${prayer.id})" 
                                             class="text-sm text-green-600 hover:text-green-800 font-medium">
                                         ✓ Mark as Answered
@@ -529,6 +602,7 @@
                             </div>
                             <p class="text-sm mb-2" style="color: #8b7355;">${new Date(prayer.created_at).toLocaleDateString()}</p>
                             <p class="font-semibold mb-2" style="color: #5d4e37;">${escapeHtml(prayer.title)}</p>
+                            ${prayer.user_id === currentUserId ? `<div class="flex gap-3 mb-2"><button class="text-sm underline" onclick="editPrayerRequest(${prayer.id})">Edit request</button><button class="text-sm underline" onclick="deletePrayerRequest(${prayer.id})">Delete request</button></div>` : ''}
                             <p class="text-sm whitespace-pre-wrap mb-2" style="color: #6b5d4f;">${escapeHtml(prayer.content)}</p>
                             ${prayer.status === 'answered' && prayer.answer_explanation ? `
                                 <div class="mt-3 p-3 rounded-lg" style="background-color: #f0f9ff; border-left: 4px solid #22c55e;">
@@ -540,7 +614,7 @@
                                 <span class="text-xs" style="color: #8b7355;">Loading reactions...</span>
                             </div>
                             <div class="flex gap-3">
-                                ${prayer.status === 'active' ? `
+                                ${prayer.status === 'active' && (prayer.user_id === currentUserId || currentUserIsAdmin) ? `
                                     <button onclick="openMarkAnsweredModal(${prayer.id})" 
                                             class="text-sm text-green-600 hover:text-green-800 font-medium">
                                         ✓ Mark as Answered
@@ -629,6 +703,7 @@
                                         ${new Date(comment.created_at).toLocaleDateString()} at ${new Date(comment.created_at).toLocaleTimeString()}
                                     </p>
                                     <p class="text-sm whitespace-pre-wrap mb-2" style="color: #6b5d4f;">${escapeHtml(comment.content)}</p>
+                                    ${comment.user_id === currentUserId ? `<button class="text-sm underline" onclick="deleteEncouragement(${comment.id},${prayerId})">Delete encouragement</button>` : ''}
                                     <div id="reactions-prayer_comment-${comment.id}" class="flex flex-wrap gap-1 items-center mt-2">
                                         <span class="text-xs" style="color: #8b7355;">Loading reactions...</span>
                                     </div>
@@ -843,17 +918,12 @@
             }
         }
 
-        // Load study plan (placeholder - copy from groups.html)
-        async function loadStudyPlan() {
-            document.getElementById('studyPlanContent').innerHTML = '<p class="text-center py-8" style="color: #8b7355;">Study plan functionality coming soon...</p>';
-        }
-
         // Helper functions
         function escapeHtml(text) {
             if (!text) return '';
             const div = document.createElement('div');
             div.textContent = text;
-            return div.innerHTML;
+            return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
 
         function getProfilePictureHTML(user, size = 'w-8 h-8', textSize = 'text-xs') {
@@ -885,6 +955,8 @@
 
         // Open add prayer modal
         function openAddPrayerModal() {
+            editingPrayerID = null;
+            document.querySelector('#addPrayerModal h2').textContent = 'New Prayer Request';
             const modal = document.getElementById('addPrayerModal');
             modal.classList.remove('hidden');
             modal.classList.add('flex');
@@ -929,8 +1001,8 @@
             };
 
             try {
-                const response = await fetch('/api/prayers/create', {
-                    method: 'POST',
+                const response = await fetch(editingPrayerID ? `/api/prayers/${editingPrayerID}/update` : '/api/prayers/create', {
+                    method: editingPrayerID ? 'PUT' : 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(data)
                 });
@@ -941,12 +1013,11 @@
                 }
                 
                 closeAddPrayerModal();
-                showMessage('Success', 'Prayer request added! Your group will be notified.');
+                showMessage('Success', 'Prayer request saved.');
                 await loadPrayers();
             } catch (error) {
                 console.error('Error adding prayer request:', error);
-                closeAddPrayerModal();
-                showMessage('Error', 'Failed to add prayer request: ' + error.message);
+                showMessage('Error', 'Failed to save prayer request: ' + error.message);
             }
         });
 
@@ -1094,7 +1165,9 @@
         // Initialize
         checkAuth().then(async () => {
             await Promise.all([loadGroup(), loadMembers()]);
+            connectGroupUpdates();
         });
     </script>
+    <script src="/group-social.js"></script>
 </body>
 </html>

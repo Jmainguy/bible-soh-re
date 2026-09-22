@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/mail"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -29,7 +30,9 @@ func respondSuccess(w http.ResponseWriter) {
 
 // respondError sends an HTTP error response
 func respondError(w http.ResponseWriter, message string, code int) {
-	http.Error(w, message, code)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	respondJSON(w, map[string]string{"error": message})
 }
 
 // requireMethod checks if the request method matches, returns true if valid
@@ -653,6 +656,10 @@ func (h *AuthHandler) handleCreateComment(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	if strings.TrimSpace(req.Content) == "" {
+		respondError(w, "Content is required", http.StatusBadRequest)
+		return
+	}
 	// Verify note exists and user has access
 	note, ok := h.getNoteAndCheckAccess(w, req.NoteID, user.ID)
 	if !ok {
@@ -663,6 +670,11 @@ func (h *AuthHandler) handleCreateComment(w http.ResponseWriter, r *http.Request
 	var parentID sql.NullInt64
 	if req.ParentID != nil {
 		parentID = sql.NullInt64{Int64: *req.ParentID, Valid: true}
+		parent, err := h.db.GetNoteComment(*req.ParentID)
+		if err != nil || parent.NoteID != note.ID {
+			respondError(w, "Reply must belong to the same note", http.StatusBadRequest)
+			return
+		}
 	}
 
 	comment, err := h.db.CreateNoteComment(note.ID, user.ID, parentID, req.Content)
@@ -675,6 +687,7 @@ func (h *AuthHandler) handleCreateComment(w http.ResponseWriter, r *http.Request
 	// Broadcast update to all connected clients
 	BroadcastUpdate(BroadcastMessage{
 		Type:   "note_comment",
+		Scope:  socialScope{GroupID: note.GroupID, UserID: note.UserID},
 		Action: "create",
 		NoteID: int(req.NoteID),
 		Data: map[string]interface{}{
@@ -734,6 +747,15 @@ func (h *AuthHandler) handleDeleteComment(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	comment, err := h.db.GetNoteComment(commentID)
+	if err != nil {
+		respondError(w, "Comment not found", http.StatusNotFound)
+		return
+	}
+	note, ok := h.getNoteAndCheckAccess(w, comment.NoteID, user.ID)
+	if !ok {
+		return
+	}
 	if err := h.db.DeleteNoteComment(commentID, user.ID); err != nil {
 		log.Printf("Failed to delete comment: %v", err)
 		respondError(w, "Failed to delete comment", http.StatusInternalServerError)
@@ -743,6 +765,8 @@ func (h *AuthHandler) handleDeleteComment(w http.ResponseWriter, r *http.Request
 	// Broadcast update to all connected clients
 	BroadcastUpdate(BroadcastMessage{
 		Type:   "note_comment",
+		Scope:  socialScope{GroupID: note.GroupID, UserID: note.UserID},
+		NoteID: int(note.ID),
 		Action: "delete",
 		Data: map[string]interface{}{
 			"comment_id": commentID,
@@ -817,6 +841,15 @@ func (h *AuthHandler) handleUpdateCommentByID(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	comment, err := h.db.GetNoteComment(commentID)
+	if err != nil {
+		respondError(w, "Comment not found", http.StatusNotFound)
+		return
+	}
+	note, ok := h.getNoteAndCheckAccess(w, comment.NoteID, user.ID)
+	if !ok {
+		return
+	}
 	if err := h.db.UpdateNoteComment(commentID, user.ID, req.Content); err != nil {
 		log.Printf("Failed to update comment: %v", err)
 		respondError(w, "Failed to update comment", http.StatusInternalServerError)
@@ -826,6 +859,8 @@ func (h *AuthHandler) handleUpdateCommentByID(w http.ResponseWriter, r *http.Req
 	// Broadcast update to all connected clients
 	BroadcastUpdate(BroadcastMessage{
 		Type:   "note_comment",
+		Scope:  socialScope{GroupID: note.GroupID, UserID: note.UserID},
+		NoteID: int(note.ID),
 		Action: "update",
 		Data: map[string]interface{}{
 			"comment_id": commentID,
@@ -1017,6 +1052,9 @@ func (h *AuthHandler) handleInviteToGroupByID(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	if !h.requireGroupAdmin(w, groupID, user.ID) {
+		return
+	}
 	var req struct {
 		Username string `json:"username"`
 	}
@@ -1025,14 +1063,19 @@ func (h *AuthHandler) handleInviteToGroupByID(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	req.Username = strings.TrimSpace(req.Username)
 	// Find user by username or email
 	invitedUser, err := h.db.GetUserByUsername(req.Username)
 	if err != nil {
 		// Try by email
 		invitedUser, err = h.db.GetUserByEmail(req.Username)
 		if err != nil {
-			respondError(w, "User not found", http.StatusNotFound)
-			return
+			address, parseErr := mail.ParseAddress(req.Username)
+			if parseErr != nil || address.Address != req.Username {
+				respondError(w, "Enter an existing username or a valid email address", http.StatusBadRequest)
+				return
+			}
+			invitedUser = &User{Email: address.Address}
 		}
 	}
 
@@ -1103,6 +1146,9 @@ func (h *AuthHandler) handleUpdateNoteByID(w http.ResponseWriter, r *http.Reques
 	if user == nil {
 		return
 	}
+	if _, ok := h.requireSocialAccess(w, "note", noteID, user.ID); !ok {
+		return
+	}
 
 	var req struct {
 		Content string `json:"content"`
@@ -1128,6 +1174,9 @@ func (h *AuthHandler) handleDeleteNoteByID(w http.ResponseWriter, r *http.Reques
 
 	user := h.requireUser(w, r)
 	if user == nil {
+		return
+	}
+	if _, ok := h.requireSocialAccess(w, "note", noteID, user.ID); !ok {
 		return
 	}
 
@@ -1293,6 +1342,10 @@ func (h *AuthHandler) handleCreateStudyPlan(w http.ResponseWriter, r *http.Reque
 	if !decodeJSONBody(w, r, &req) {
 		return
 	}
+	if !validStudyPlan(req.WeekNumber, req.StartDate, req.EndDate, req.Book, req.StartChapter, req.EndChapter) {
+		respondError(w, "Enter a valid week, date range and Bible chapter range", http.StatusBadRequest)
+		return
+	}
 
 	// Verify user is group admin
 	if !h.requireGroupAdmin(w, req.GroupID, user.ID) {
@@ -1307,6 +1360,7 @@ func (h *AuthHandler) handleCreateStudyPlan(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	BroadcastUpdate(BroadcastMessage{Type: "study_plan", Action: "update", Scope: socialScope{GroupID: sql.NullInt64{Int64: plan.GroupID, Valid: true}, UserID: user.ID}})
 	respondJSON(w, plan)
 }
 
@@ -1362,13 +1416,21 @@ func (h *AuthHandler) handleUpdateStudyPlan(w http.ResponseWriter, r *http.Reque
 	if !decodeJSONBody(w, r, &req) {
 		return
 	}
-
-	// Verify user is group admin
-	if !h.requireGroupAdmin(w, req.GroupID, user.ID) {
+	if !validStudyPlan(req.WeekNumber, req.StartDate, req.EndDate, req.Book, req.StartChapter, req.EndChapter) {
+		respondError(w, "Enter a valid week, date range and Bible chapter range", http.StatusBadRequest)
 		return
 	}
 
-	err := h.db.UpdateStudyPlan(req.ID, req.WeekNumber, req.StartDate, req.EndDate,
+	plan, err := h.db.GetStudyPlan(req.ID)
+	if err != nil {
+		respondError(w, "Study plan not found", http.StatusNotFound)
+		return
+	}
+	if !h.requireGroupAdmin(w, plan.GroupID, user.ID) {
+		return
+	}
+
+	err = h.db.UpdateStudyPlan(req.ID, req.WeekNumber, req.StartDate, req.EndDate,
 		req.Book, req.StartChapter, req.EndChapter, req.Description)
 	if err != nil {
 		log.Printf("Failed to update study plan: %v", err)
@@ -1376,7 +1438,8 @@ func (h *AuthHandler) handleUpdateStudyPlan(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	BroadcastUpdate(BroadcastMessage{Type: "study_plan", Action: "update", Scope: socialScope{GroupID: sql.NullInt64{Int64: plan.GroupID, Valid: true}, UserID: user.ID}})
+	respondSuccess(w)
 }
 
 // handleDeleteStudyPlan deletes a study plan
@@ -1399,19 +1462,24 @@ func (h *AuthHandler) handleDeleteStudyPlan(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Verify user is group admin
-	if !h.requireGroupAdmin(w, req.GroupID, user.ID) {
+	plan, err := h.db.GetStudyPlan(req.ID)
+	if err != nil {
+		respondError(w, "Study plan not found", http.StatusNotFound)
+		return
+	}
+	if !h.requireGroupAdmin(w, plan.GroupID, user.ID) {
 		return
 	}
 
-	err := h.db.DeleteStudyPlan(req.ID)
+	err = h.db.DeleteStudyPlan(req.ID)
 	if err != nil {
 		log.Printf("Failed to delete study plan: %v", err)
 		respondError(w, "Failed to delete study plan", http.StatusInternalServerError)
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	BroadcastUpdate(BroadcastMessage{Type: "study_plan", Action: "update", Scope: socialScope{GroupID: sql.NullInt64{Int64: plan.GroupID, Valid: true}, UserID: user.ID}})
+	respondSuccess(w)
 }
 
 // ============ Prayer Request Handlers ============
@@ -1454,6 +1522,7 @@ func (h *AuthHandler) handleCreatePrayerRequest(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	BroadcastUpdate(BroadcastMessage{Type: "prayer", Action: "create", Scope: socialScope{GroupID: sql.NullInt64{Int64: req.GroupID, Valid: true}, UserID: user.ID}})
 	respondJSON(w, prayer)
 }
 
@@ -1522,6 +1591,10 @@ func (h *AuthHandler) handleUpdatePrayerRequest(w http.ResponseWriter, r *http.R
 	if user == nil {
 		return
 	}
+	scope, ok := h.requireSocialAccess(w, "prayer_request", prayerID, user.ID)
+	if !ok {
+		return
+	}
 
 	var req struct {
 		Title   string `json:"title"`
@@ -1543,6 +1616,7 @@ func (h *AuthHandler) handleUpdatePrayerRequest(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	BroadcastUpdate(BroadcastMessage{Type: "prayer", Action: "update", Scope: scope})
 	respondSuccess(w)
 }
 
@@ -1554,6 +1628,10 @@ func (h *AuthHandler) handleUpdatePrayerRequestStatus(w http.ResponseWriter, r *
 
 	user := h.requireUser(w, r)
 	if user == nil {
+		return
+	}
+	scope, ok := h.requireSocialAccess(w, "prayer_request", prayerID, user.ID)
+	if !ok {
 		return
 	}
 
@@ -1572,6 +1650,7 @@ func (h *AuthHandler) handleUpdatePrayerRequestStatus(w http.ResponseWriter, r *
 		return
 	}
 
+	BroadcastUpdate(BroadcastMessage{Type: "prayer", Action: "update", Scope: scope})
 	respondSuccess(w)
 }
 
@@ -1583,6 +1662,10 @@ func (h *AuthHandler) handleUpdatePrayerAnswerExplanation(w http.ResponseWriter,
 
 	user := h.requireUser(w, r)
 	if user == nil {
+		return
+	}
+	scope, ok := h.requireSocialAccess(w, "prayer_request", prayerID, user.ID)
+	if !ok {
 		return
 	}
 
@@ -1600,6 +1683,7 @@ func (h *AuthHandler) handleUpdatePrayerAnswerExplanation(w http.ResponseWriter,
 		return
 	}
 
+	BroadcastUpdate(BroadcastMessage{Type: "prayer", Action: "update", Scope: scope})
 	respondSuccess(w)
 }
 
@@ -1613,6 +1697,10 @@ func (h *AuthHandler) handleMarkPrayerAsUnanswered(w http.ResponseWriter, r *htt
 	if user == nil {
 		return
 	}
+	scope, ok := h.requireSocialAccess(w, "prayer_request", prayerID, user.ID)
+	if !ok {
+		return
+	}
 
 	if err := h.db.MarkPrayerAsUnanswered(prayerID, user.ID); err != nil {
 		log.Printf("Failed to mark prayer as unanswered: %v", err)
@@ -1620,6 +1708,7 @@ func (h *AuthHandler) handleMarkPrayerAsUnanswered(w http.ResponseWriter, r *htt
 		return
 	}
 
+	BroadcastUpdate(BroadcastMessage{Type: "prayer", Action: "update", Scope: scope})
 	respondSuccess(w)
 }
 
@@ -1633,6 +1722,10 @@ func (h *AuthHandler) handleDeletePrayerRequest(w http.ResponseWriter, r *http.R
 	if user == nil {
 		return
 	}
+	scope, ok := h.requireSocialAccess(w, "prayer_request", prayerID, user.ID)
+	if !ok {
+		return
+	}
 
 	if err := h.db.DeletePrayerRequest(prayerID, user.ID); err != nil {
 		log.Printf("Failed to delete prayer request: %v", err)
@@ -1640,6 +1733,7 @@ func (h *AuthHandler) handleDeletePrayerRequest(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	BroadcastUpdate(BroadcastMessage{Type: "prayer", Action: "update", Scope: scope})
 	respondSuccess(w)
 }
 
@@ -1653,6 +1747,10 @@ func (h *AuthHandler) handleArchivePrayerRequest(w http.ResponseWriter, r *http.
 	if user == nil {
 		return
 	}
+	scope, ok := h.requireSocialAccess(w, "prayer_request", prayerID, user.ID)
+	if !ok {
+		return
+	}
 
 	if err := h.db.ArchivePrayerRequest(prayerID, user.ID); err != nil {
 		log.Printf("Failed to archive prayer request: %v", err)
@@ -1660,6 +1758,7 @@ func (h *AuthHandler) handleArchivePrayerRequest(w http.ResponseWriter, r *http.
 		return
 	}
 
+	BroadcastUpdate(BroadcastMessage{Type: "prayer", Action: "update", Scope: scope})
 	respondSuccess(w)
 }
 
@@ -1673,6 +1772,10 @@ func (h *AuthHandler) handleRestorePrayerRequest(w http.ResponseWriter, r *http.
 	if user == nil {
 		return
 	}
+	scope, ok := h.requireSocialAccess(w, "prayer_request", prayerID, user.ID)
+	if !ok {
+		return
+	}
 
 	if err := h.db.RestorePrayerRequest(int(prayerID), int(user.ID)); err != nil {
 		log.Printf("Failed to restore prayer request: %v", err)
@@ -1680,6 +1783,7 @@ func (h *AuthHandler) handleRestorePrayerRequest(w http.ResponseWriter, r *http.
 		return
 	}
 
+	BroadcastUpdate(BroadcastMessage{Type: "prayer", Action: "update", Scope: scope})
 	respondSuccess(w)
 }
 
@@ -1759,6 +1863,7 @@ func (h *AuthHandler) handleCreatePrayerComment(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	BroadcastUpdate(BroadcastMessage{Type: "prayer", Action: "comment", Scope: socialScope{GroupID: sql.NullInt64{Int64: prayer.GroupID, Valid: true}, UserID: user.ID}})
 	respondJSON(w, comment)
 }
 
@@ -1806,12 +1911,18 @@ func (h *AuthHandler) handleDeletePrayerComment(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	scope, allowed := h.requireSocialAccess(w, "prayer_comment", commentID, user.ID)
+	if !allowed {
+		return
+	}
+
 	if err := h.db.DeletePrayerComment(commentID, user.ID); err != nil {
 		log.Printf("Failed to delete prayer comment: %v", err)
 		respondError(w, "Failed to delete comment", http.StatusInternalServerError)
 		return
 	}
 
+	BroadcastUpdate(BroadcastMessage{Type: "prayer", Action: "comment", Scope: scope})
 	respondSuccess(w)
 }
 
@@ -2207,6 +2318,11 @@ func (h *AuthHandler) handleCreateVerseComment(w http.ResponseWriter, r *http.Re
 	var parentID sql.NullInt64
 	if req.ParentID != nil {
 		parentID = sql.NullInt64{Int64: *req.ParentID, Valid: true}
+		parent, err := h.db.GetVerseComment(*req.ParentID)
+		if err != nil || parent.GroupID != groupID || parent.Book != req.Book || parent.Chapter != req.Chapter || parent.Verse != req.Verse || (!groupID.Valid && parent.UserID != user.ID) {
+			respondError(w, "Reply must belong to the same verse and audience", http.StatusBadRequest)
+			return
+		}
 	}
 
 	comment, err := h.db.CreateVerseComment(groupID, user.ID, req.Book, req.Chapter, req.Verse, parentID, req.Content)
@@ -2219,6 +2335,7 @@ func (h *AuthHandler) handleCreateVerseComment(w http.ResponseWriter, r *http.Re
 	// Broadcast update to all connected clients
 	BroadcastUpdate(BroadcastMessage{
 		Type:    "verse_comment",
+		Scope:   socialScope{GroupID: comment.GroupID, UserID: comment.UserID},
 		Action:  "create",
 		Book:    req.Book,
 		Chapter: req.Chapter,
@@ -2279,7 +2396,7 @@ func (h *AuthHandler) handleGetVerseComments(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	comments, err := h.db.GetVerseComments(book, chapter, verse, groupID)
+	comments, err := h.db.GetVerseComments(book, chapter, verse, groupID, user.ID)
 	if err != nil {
 		log.Printf("Failed to get verse comments: %v", err)
 		respondError(w, "Failed to get comments", http.StatusInternalServerError)
@@ -2297,6 +2414,9 @@ func (h *AuthHandler) handleUpdateVerseComment(w http.ResponseWriter, r *http.Re
 
 	user := h.requireUser(w, r)
 	if user == nil {
+		return
+	}
+	if _, ok := h.requireSocialAccess(w, "verse_comment", commentID, user.ID); !ok {
 		return
 	}
 
@@ -2331,6 +2451,7 @@ func (h *AuthHandler) handleUpdateVerseComment(w http.ResponseWriter, r *http.Re
 	// Broadcast update to all connected clients
 	BroadcastUpdate(BroadcastMessage{
 		Type:    "verse_comment",
+		Scope:   socialScope{GroupID: comment.GroupID, UserID: comment.UserID},
 		Action:  "update",
 		Book:    comment.Book,
 		Chapter: comment.Chapter,
@@ -2353,6 +2474,9 @@ func (h *AuthHandler) handleDeleteVerseComment(w http.ResponseWriter, r *http.Re
 	if user == nil {
 		return
 	}
+	if _, ok := h.requireSocialAccess(w, "verse_comment", commentID, user.ID); !ok {
+		return
+	}
 
 	// Get comment details before deleting (for broadcast)
 	comment, err := h.db.GetVerseComment(commentID)
@@ -2372,6 +2496,7 @@ func (h *AuthHandler) handleDeleteVerseComment(w http.ResponseWriter, r *http.Re
 	// Broadcast update to all connected clients
 	BroadcastUpdate(BroadcastMessage{
 		Type:    "verse_comment",
+		Scope:   socialScope{GroupID: comment.GroupID, UserID: comment.UserID},
 		Action:  "delete",
 		Book:    comment.Book,
 		Chapter: comment.Chapter,

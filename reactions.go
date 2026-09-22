@@ -195,11 +195,15 @@ func (s *AuthHandler) handleToggleReaction(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Validate emoji (basic check - just ensure it's not empty and reasonable length)
-	if req.Emoji == "" || len(req.Emoji) > 10 {
+	if !map[string]bool{"👍": true, "❤️": true, "🙏": true, "😊": true, "🎉": true, "👏": true}[req.Emoji] {
 		http.Error(w, "Invalid emoji", http.StatusBadRequest)
 		return
 	}
 
+	scope, ok := s.requireSocialAccess(w, req.TargetType, req.TargetID, userID)
+	if !ok {
+		return
+	}
 	// Check if reaction already exists
 	reactions, err := s.db.GetReactions(req.TargetType, req.TargetID)
 	if err != nil {
@@ -231,6 +235,7 @@ func (s *AuthHandler) handleToggleReaction(w http.ResponseWriter, r *http.Reques
 	// Broadcast update to all connected clients
 	BroadcastUpdate(BroadcastMessage{
 		Type:   "reaction",
+		Scope:  scope,
 		Action: "update",
 		Data: map[string]interface{}{
 			"target_type": req.TargetType,
@@ -275,6 +280,9 @@ func (s *AuthHandler) handleGetReactionsSummary(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	if _, ok := s.requireSocialAccess(w, targetType, targetID, userID); !ok {
+		return
+	}
 	summary, err := s.db.GetReactionsSummary(targetType, targetID, userID)
 	if err != nil {
 		http.Error(w, "Failed to get reactions", http.StatusInternalServerError)

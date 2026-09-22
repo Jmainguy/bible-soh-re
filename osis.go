@@ -208,9 +208,13 @@ func parseOSISUsingXML(osisText string, filters OSISFilters) ParsedVerse {
 				// collect attributes
 				lemmaVal := ""
 				xlitVal := ""
+				morphVal := ""
 				for _, a := range t.Attr {
 					if a.Name.Local == "lemma" {
 						lemmaVal = a.Value
+					}
+					if a.Name.Local == "morph" {
+						morphVal = a.Value
 					}
 					if a.Name.Local == "xlit" {
 						xlitVal = a.Value
@@ -264,7 +268,7 @@ func parseOSISUsingXML(osisText string, filters OSISFilters) ParsedVerse {
 					cleanLemma = strings.TrimPrefix(cleanLemma, "BSBlex:")
 				}
 
-				if len(strongs) > 0 || cleanLemma != "" || xlitVal != "" {
+				if len(strongs) > 0 || cleanLemma != "" || xlitVal != "" || morphVal != "" {
 					finalLemma := cleanLemma
 					finalXlit := xlitVal
 					// If the original `lemma` attribute existed but cleaned to empty
@@ -280,7 +284,7 @@ func parseOSISUsingXML(osisText string, filters OSISFilters) ParsedVerse {
 					// provided lemma text. If the lemma was derived from a lexicon lookup
 					// (i.e., original `lemmaVal` was empty), do not populate `Lemma` here.
 					outLemma := ""
-					outXlit := ""
+					outXlit := finalXlit
 					if lemmaVal != "" {
 						outLemma = finalLemma
 						outXlit = finalXlit
@@ -290,6 +294,7 @@ func parseOSISUsingXML(osisText string, filters OSISFilters) ParsedVerse {
 						Strongs: strongs,
 						Lemma:   outLemma,
 						Xlit:    outXlit,
+						Morph:   morphVal,
 					})
 				}
 

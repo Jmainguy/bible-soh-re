@@ -109,7 +109,7 @@ func (h *AuthHandler) createSession(w http.ResponseWriter, userID int64) error {
 		Path:     "/",
 		MaxAge:   int(sessionDuration.Seconds()),
 		HttpOnly: true,
-		Secure:   false, // Set to true in production with HTTPS
+		Secure:   strings.HasPrefix(h.config.BaseURL, "https://"),
 		SameSite: http.SameSiteLaxMode,
 	})
 

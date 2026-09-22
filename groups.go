@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -59,17 +60,12 @@ type GroupInvite struct {
 
 // CreateStudyGroup creates a new study group
 func (d *Database) CreateStudyGroup(name, logoURL string, createdBy int64) (*StudyGroup, error) {
-	result, err := d.db.Exec(
+	id, err := d.insert(
 		`INSERT INTO study_groups (name, logo_url, created_by) VALUES (?, ?, ?)`,
 		name, logoURL, createdBy,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create study group: %w", err)
-	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get group ID: %w", err)
 	}
 
 	// Add creator as admin
@@ -189,20 +185,25 @@ func (d *Database) IsGroupAdmin(groupID, userID int64) (bool, error) {
 
 // CreateGroupInvite creates a new group invitation
 func (d *Database) CreateGroupInvite(groupID, invitedBy int64, email, token string) (*GroupInvite, error) {
+	email = strings.TrimSpace(email)
+	var existing int64
+	err := d.db.QueryRow("SELECT id FROM group_invites WHERE group_id=? AND lower(email)=lower(?) AND expires_at>?", groupID, email, time.Now()).Scan(&existing)
+	if err == nil {
+		return d.GetGroupInvite(existing)
+	}
+	if err != sql.ErrNoRows {
+		return nil, err
+	}
+
 	expiresAt := time.Now().Add(7 * 24 * time.Hour) // 7 days
 
-	result, err := d.db.Exec(
+	id, err := d.insert(
 		`INSERT INTO group_invites (group_id, invited_by, email, token, expires_at)
 		 VALUES (?, ?, ?, ?, ?)`,
 		groupID, invitedBy, email, token, expiresAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create invite: %w", err)
-	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get invite ID: %w", err)
 	}
 
 	return d.GetGroupInvite(id)
@@ -290,7 +291,7 @@ func (d *Database) GetPendingInvites(email string) ([]*GroupInvite, error) {
 		 FROM group_invites gi
 		 INNER JOIN study_groups g ON gi.group_id = g.id
 		 INNER JOIN users u ON gi.invited_by = u.id
-		 WHERE gi.email = ? AND gi.expires_at > ?
+		 WHERE lower(gi.email) = lower(?) AND gi.expires_at > ?
 		 ORDER BY gi.created_at DESC`,
 		email, time.Now(),
 	)
@@ -345,18 +346,13 @@ func (d *Database) UpdateGroupLogo(groupID int64, logoURL string) error {
 
 // CreateStudyPlan creates a new study plan for a group
 func (d *Database) CreateStudyPlan(groupID int64, weekNumber int, startDate, endDate, book string, startChapter, endChapter int, description string) (*StudyPlan, error) {
-	result, err := d.db.Exec(
+	id, err := d.insert(
 		`INSERT INTO study_plans (group_id, week_number, start_date, end_date, book, start_chapter, end_chapter, description)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		groupID, weekNumber, startDate, endDate, book, startChapter, endChapter, description,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create study plan: %w", err)
-	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get study plan ID: %w", err)
 	}
 
 	return d.GetStudyPlan(id)

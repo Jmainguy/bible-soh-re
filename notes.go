@@ -41,17 +41,12 @@ type NoteComment struct {
 
 // CreateNote creates a new note
 func (d *Database) CreateNote(userID int64, groupID sql.NullInt64, book string, chapter int, content string) (*Note, error) {
-	result, err := d.db.Exec(
+	id, err := d.insert(
 		`INSERT INTO notes (user_id, group_id, book, chapter, content) VALUES (?, ?, ?, ?, ?)`,
 		userID, groupID, book, chapter, content,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create note: %w", err)
-	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get note ID: %w", err)
 	}
 
 	return d.GetNote(id)
@@ -180,17 +175,12 @@ func (d *Database) DeleteNote(noteID, userID int64) error {
 
 // CreateNoteComment creates a comment on a note
 func (d *Database) CreateNoteComment(noteID, userID int64, parentID sql.NullInt64, content string) (*NoteComment, error) {
-	result, err := d.db.Exec(
+	id, err := d.insert(
 		`INSERT INTO note_comments (note_id, user_id, parent_id, content) VALUES (?, ?, ?, ?)`,
 		noteID, userID, parentID, content,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create comment: %w", err)
-	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get comment ID: %w", err)
 	}
 
 	return d.GetNoteComment(id)
@@ -296,7 +286,10 @@ func (d *Database) UpdateNoteComment(commentID, userID int64, content string) er
 // DeleteNoteComment deletes a comment (only by the owner)
 func (d *Database) DeleteNoteComment(commentID, userID int64) error {
 	result, err := d.db.Exec(
-		`DELETE FROM note_comments WHERE id = ? AND user_id = ?`,
+		`WITH RECURSIVE thread(id) AS (
+            SELECT id FROM note_comments WHERE id = ? AND user_id = ?
+            UNION ALL SELECT c.id FROM note_comments c JOIN thread t ON c.parent_id=t.id
+        ) DELETE FROM note_comments WHERE id IN (SELECT id FROM thread)`,
 		commentID, userID,
 	)
 	if err != nil {

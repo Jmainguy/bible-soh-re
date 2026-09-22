@@ -1,0 +1,64 @@
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: bible-soh-re-vs
+  namespace: bible-soh-re
+spec:
+  gateways:
+  - istio-system/bible-soh-re-gateway
+  hosts:
+  - bible.soh.re
+  http:
+  - match:
+    - scheme:
+        exact: http
+      uri:
+        prefix: /
+    redirect:
+      redirectCode: 302
+      scheme: https
+  - route:
+    - destination:
+        host: bible-soh-re
+        port:
+          number: 80
+---
+apiVersion: networking.istio.io/v1
+kind: Gateway
+metadata:
+  name: bible-soh-re-gateway
+  namespace: istio-system
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - hosts:
+    - bible.soh.re
+    port:
+      name: https
+      number: 443
+      protocol: HTTPS
+    tls:
+      credentialName: bible-soh-re-tls
+      mode: SIMPLE
+  - hosts:
+    - bible.soh.re
+    port:
+      name: http
+      number: 80
+      protocol: HTTP
+    tls:
+      httpsRedirect: false
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: bible-soh-re-tls
+  namespace: istio-system
+spec:
+  dnsNames:
+  - bible.soh.re
+  issuerRef:
+    kind: ClusterIssuer
+    name: letsencrypt-http
+  secretName: bible-soh-re-tls

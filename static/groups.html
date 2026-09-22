@@ -4,11 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Study Groups - Bible Reader</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/png" href="/brand-bible.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,600;0,700;1,400&family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/tailwind.css">
     <style>
         body {
             background-color: #f5f1e8;
@@ -59,14 +59,16 @@
             background-color: rgba(93, 78, 55, 0.5);
         }
     </style>
+    <link rel="stylesheet" href="/brand.css">
 </head>
 <body>
     <div class="min-h-screen">
         <!-- Header -->
-        <header class="bg-gradient-to-r from-blue-800 to-blue-900 text-white shadow-lg">
+        <header class="brand-header">
             <div class="container mx-auto px-4 py-6">
                 <div class="flex items-center justify-between">
                     <div>
+                        <a class="brand-small" href="/"><img src="/brand-bible.png" alt="" width="40" height="40">Holy Bible</a>
                         <h1 class="text-3xl font-bold" style="font-family: 'EB Garamond', Georgia, serif;">Study Groups</h1>
                         <p class="text-blue-200 mt-1">Collaborative Bible Study</p>
                     </div>
@@ -453,7 +455,7 @@
                     <div class="group-card rounded-lg p-6">
                         <div class="flex items-start gap-4 mb-4">
                             ${group.logo_url ? 
-                                `<img src="${group.logo_url}" class="w-20 h-20 object-cover rounded-lg border-2 border-amber-200 flex-shrink-0" alt="${escapeHtml(group.name)} logo">` : 
+                                `<img src="${escapeHtml(group.logo_url)}" class="w-20 h-20 object-cover rounded-lg border-2 border-amber-200 flex-shrink-0" alt="${escapeHtml(group.name)} logo">` :
                                 '<div class="w-20 h-20 bg-amber-100 rounded-lg flex items-center justify-center text-3xl flex-shrink-0">📖</div>'}
                             <div class="flex-1 min-w-0">
                                 <h3 class="text-2xl font-bold mb-2" style="color: #5d4e37; font-family: 'EB Garamond', Georgia, serif;">${escapeHtml(group.name)}</h3>
@@ -464,10 +466,7 @@
                                    class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium">
                                     View Group →
                                 </a>
-                                <button onclick="openInviteModal(${group.id})" 
-                                        class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition text-sm font-medium">
-                                    + Invite
-                                </button>
+
                             </div>
                         </div>
                     </div>
@@ -1510,7 +1509,7 @@
             if (!text) return '';
             const div = document.createElement('div');
             div.textContent = text;
-            return div.innerHTML;
+            return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
         }
 
         // Helper function to generate profile picture HTML

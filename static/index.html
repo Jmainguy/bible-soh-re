@@ -4,11 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bible Reader</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/png" href="/brand-bible.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,600;0,700;1,400&family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/tailwind.css">
     <style>
             /* OSIS compatibility: The following CSS supports OSIS output tags such as <sup class="cross-ref">, <sup class="footnote">, <span class="strongs">, etc. */
         body {
@@ -130,6 +130,7 @@
         }
         .content-wrapper.sidebar-collapsed {
             grid-template-columns: 0fr minmax(0, 1fr);
+            gap: 0;
         }
         .sidebar {
             transition: all 0.3s ease-in-out;
@@ -143,7 +144,7 @@
             transition: all 0.3s ease-in-out;
         }
         .toggle-sidebar {
-            display: none;
+            display: inline-flex;
         }
         .sidebar-overlay {
             display: none;
@@ -326,24 +327,21 @@
             font-style: italic;
         }
     </style>
+    <link rel="stylesheet" href="/brand.css">
 </head>
 <body class="bg-gray-50">
     <div class="min-h-screen">
         <!-- Header -->
-        <header class="bg-blue-900 text-white shadow-lg">
+        <header class="brand-header">
             <div class="container mx-auto px-4 py-3 md:py-6">
                 <div class="flex items-center justify-between">
-                    <!-- Mobile menu button -->
-                    <button id="toggleSidebar" class="toggle-sidebar bg-blue-700 hover:bg-blue-600 text-white p-2 rounded-lg transition">
-                        <svg id="sidebarIcon" class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
-                        </svg>
-                    </button>
-                    
-                    <div class="flex-1">
-                        <h1 id="translationFullName" class="text-xl md:text-3xl font-bold text-center">Holy Bible</h1>
-                        <p id="translationDescription" class="text-center text-blue-200 mt-1 md:mt-2 text-sm md:text-base"></p>
-                    </div>
+                    <a href="/" class="brand-lockup" aria-label="Holy Bible home">
+                        <img src="/brand-bible.png" alt="" width="72" height="72" fetchpriority="high">
+                        <div>
+                            <h1 id="translationFullName">Holy Bible</h1>
+                            <p class="brand-tagline">“Be diligent to present yourself approved to God as a workman who does not need to be ashamed, accurately handling the word of truth.”<span class="brand-verse-reference">2 Timothy 2:15 · NASB</span></p>
+                        </div>
+                    </a>
                     
                     <!-- Right side menu items -->
                     <div class="flex items-center gap-2">
@@ -391,20 +389,26 @@
         <!-- Main Content -->
         <div class="container mx-auto px-2 md:px-4 py-4 md:py-8">
             <div id="contentWrapper" class="content-wrapper">
+                <div class="sidebar-toggle-rail"><button id="toggleSidebar" aria-label="Hide navigation" title="Hide navigation" aria-controls="sidebar" aria-expanded="true" class="toggle-sidebar bg-blue-700 hover:bg-blue-600 text-white p-2 rounded-lg transition">
+                        <svg id="sidebarIcon" class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                        </svg>
+                    </button></div>
                 <!-- Sidebar - Book Selection -->
                 <div id="sidebar" class="sidebar">
                     <div class="bg-white rounded-lg shadow-md p-4 sticky top-4">
                         <!-- Translation Selector -->
                         <div class="mb-4">
                             <label for="translationSelect" class="block text-sm font-medium text-gray-700 mb-2">Translation</label>
-                            <select id="translationSelect" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            <p id="translationDescription" class="brand-translation"></p>
+                            <select aria-label="Bible translation" id="translationSelect" class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
                                 <option value="">Loading...</option>
                             </select>
                         </div>
 
                         <!-- OSIS Filters -->
-                        <div class="filter-panel mb-4">
-                            <div class="filter-title">Display Options</div>
+                        <details class="filter-panel mb-4" open>
+                            <summary class="filter-title cursor-pointer">Display Options</summary>
                             <!-- Strong's Numbers UI removed per request (feature deferred) -->
                             <div class="filter-option">
                                 <input type="checkbox" id="filterFootnotes" class="filter-checkbox" checked>
@@ -434,7 +438,8 @@
                                 <input type="checkbox" id="filterXlit" class="filter-checkbox" checked>
                                 <label for="filterXlit" class="filter-label">Transliteration</label>
                             </div>
-                        </div>
+                            <p class="text-xs text-gray-500 mt-2">Annotations appear where provided by this translation.</p>
+                        </details>
                         
                         <h2 class="text-xl font-bold mb-4 text-gray-800">Books</h2>
                         <div id="bookList" class="space-y-1 max-h-[70vh] overflow-y-auto">
@@ -483,6 +488,26 @@
                                 </select>
                             </div>
                         </div>
+
+                        <section id="notesSection" class="hidden mb-6 p-4 border rounded-lg" aria-label="Chapter notes">
+                            <div class="flex flex-wrap gap-3 items-center mb-3">
+                                <h2 class="font-semibold">Chapter notes</h2>
+                                <button id="toggleNotesBtn" class="px-3 py-2 border rounded-lg">Show Notes</button>
+                                <button id="personalNotesTab" class="px-3 py-2 border-b-2">Personal</button>
+                                <button id="groupNotesTab" class="px-3 py-2 border-b-2">Group</button>
+                                <select id="groupNoteSelector" aria-label="Study group for notes" class="px-3 py-2 border rounded-lg"><option value="">Select a group</option></select>
+                            </div>
+                            <div id="personalNotesView" class="hidden">
+                                <p class="text-sm mb-3">Only you can see your personal notes.</p>
+                                <button id="createPersonalNoteBtn" class="px-3 py-2 border rounded-lg mb-3">Add personal note</button>
+                                <div id="personalNotesList"></div>
+                            </div>
+                            <div id="groupNotesView" class="hidden">
+                                <p class="text-sm mb-3">Shared with members of the selected study group.</p>
+                                <button id="createGroupNoteBtn" class="px-3 py-2 border rounded-lg mb-3">Add group note</button>
+                                <div id="groupNotesList"></div>
+                            </div>
+                        </section>
 
                         <!-- Verses Display -->
                         <div id="versesContainer" class="prose max-w-none">

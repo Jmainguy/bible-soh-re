@@ -3,7 +3,6 @@ package main
 import (
 	"database/sql"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -47,7 +46,7 @@ type Session struct {
 
 // Database handles all database operations
 type Database struct {
-	db *sql.DB
+	db *sqlBackend
 }
 
 // NewDatabase creates a new database connection and initializes tables
@@ -57,7 +56,12 @@ func NewDatabase(dbPath string) (*Database, error) {
 	// _busy_timeout=5000 waits up to 5 seconds if database is locked
 	// _parse_time=true automatically parses DATETIME values into time.Time
 	// _loc=UTC ensures times are in UTC timezone
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_busy_timeout=5000&_parse_time=true&_loc=UTC")
+	postgres := strings.HasPrefix(dbPath, "postgres://") || strings.HasPrefix(dbPath, "postgresql://")
+	driver, dsn := "sqlite3", dbPath+"?_foreign_keys=on&_journal_mode=WAL&_busy_timeout=5000&_parse_time=true&_loc=UTC"
+	if postgres {
+		driver, dsn = "postgres", dbPath
+	}
+	db, err := sql.Open(driver, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -71,8 +75,16 @@ func NewDatabase(dbPath string) (*Database, error) {
 		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	database := &Database{db: db}
+	database := &Database{db: &sqlBackend{DB: db, postgres: postgres}}
 
+	// Serialize schema changes across replicas; initialization uses one connection.
+	if postgres {
+		if _, err := db.Exec("SELECT pg_advisory_lock(72619402)"); err != nil {
+			db.Close()
+			return nil, err
+		}
+		defer db.Exec("SELECT pg_advisory_unlock(72619402)")
+	}
 	// Initialize tables
 	if err := database.initTables(); err != nil {
 		return nil, fmt.Errorf("failed to initialize tables: %w", err)
@@ -262,7 +274,10 @@ func (d *Database) initTables() error {
 
 	for _, migration := range migrations {
 		// Ignore errors if column already exists
-		_, _ = d.db.Exec(migration)
+		_, err := d.db.Exec(migration)
+		if err != nil && d.db.postgres {
+			return fmt.Errorf("migration failed: %w", err)
+		}
 	}
 
 	// Create verse comments table for threaded comments on verses
@@ -289,7 +304,7 @@ func (d *Database) initTables() error {
 
 	for _, query := range verseCommentsTables {
 		if _, err := d.db.Exec(query); err != nil {
-			log.Printf("Warning: failed to create verse comments table: %v", err)
+			return fmt.Errorf("failed to create verse comments table: %w", err)
 		}
 	}
 
@@ -328,18 +343,13 @@ func (d *Database) CreateUser(email, firstName, lastName, password string) (*Use
 		return nil, fmt.Errorf("failed to hash password: %w", err)
 	}
 
-	result, err := d.db.Exec(
+	id, err := d.insert(
 		`INSERT INTO users (email, username, first_name, last_name, password_hash, oauth_provider) 
 		 VALUES (?, ?, ?, ?, ?, 'local')`,
 		email, username, firstName, lastName, string(hashedPassword),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create user: %w", err)
-	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user ID: %w", err)
 	}
 
 	return d.GetUserByID(id)
@@ -366,18 +376,13 @@ func (d *Database) CreateOAuthUser(email, firstName, lastName, provider, oauthID
 		counter++
 	}
 
-	result, err := d.db.Exec(
+	id, err := d.insert(
 		`INSERT INTO users (email, username, first_name, last_name, oauth_provider, oauth_id) 
 		 VALUES (?, ?, ?, ?, ?, ?)`,
 		email, username, firstName, lastName, provider, oauthID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create OAuth user: %w", err)
-	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user ID: %w", err)
 	}
 
 	return d.GetUserByID(id)

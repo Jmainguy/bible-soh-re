@@ -151,15 +151,8 @@ async function init() {
     // Connect to WebSocket for real-time updates
     connectWebSocket();
     
-    // Hide sidebar on mobile by default
-    if (window.innerWidth <= 1024) {
-        sidebar.classList.add('collapsed');
-        contentWrapper.classList.add('sidebar-collapsed');
-        toggleSidebarBtn.classList.add('sidebar-hidden');
-        sidebarIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>';
-        sidebarVisible = false;
-    }
-    
+    setSidebarVisible(window.innerWidth > 1024);
+
     await loadTranslations();
     
     // Check URL parameters first
@@ -189,12 +182,12 @@ async function init() {
     setupEventListeners();
     
     // Priority: URL params > saved position > default (Genesis 1)
-    if (bookParam && chapterParam) {
+    if (bookParam) {
         // URL parameters have highest priority
         const book = bibleBooks.find(b => b.name.toLowerCase() === bookParam.toLowerCase());
         if (book) {
             currentBook = book.name;
-            currentChapter = parseInt(chapterParam);
+            currentChapter = Math.min(book.chapterCount, Math.max(1, parseInt(chapterParam) || 1));
             maxChapter = book.chapterCount;
             
             updateChapterSelector();
@@ -205,6 +198,8 @@ async function init() {
             if (verseParam) {
                 setTimeout(() => scrollToVerse(verseParam), 300);
             }
+        } else {
+            await loadDefaultPosition();
         }
     } else {
         // Try to load saved position
@@ -242,9 +237,9 @@ async function init() {
 
 // Load default position (Genesis 1)
 async function loadDefaultPosition() {
-    const genesis = bibleBooks.find(b => b.name === 'Genesis');
+    const genesis = bibleBooks.find(b => b.name === 'Genesis') || bibleBooks[0];
     if (genesis) {
-        currentBook = 'Genesis';
+        currentBook = genesis.name;
         currentChapter = 1;
         maxChapter = genesis.chapterCount;
         
@@ -258,7 +253,7 @@ async function loadDefaultPosition() {
 async function loadTranslations() {
     try {
         const response = await fetch('/api/translations');
-        const translations = await response.json();
+        const translations = await readAPIResponse(response);
         
         translationSelect.innerHTML = '';
         translations.forEach(trans => {
@@ -283,7 +278,7 @@ async function loadTranslations() {
 function updateHeader() {
     const info = translationInfo[selectedTranslation];
     if (info) {
-        document.getElementById('translationFullName').textContent = `Holy Bible - ${info.fullName}`;
+        document.getElementById('translationFullName').textContent = 'Holy Bible';
         document.getElementById('translationDescription').textContent = info.description;
     }
 }
@@ -293,7 +288,7 @@ async function loadBooks() {
     try {
         const url = `/api/books?translation=${selectedTranslation}`;
         const response = await fetch(url);
-        bibleBooks = await response.json();
+        bibleBooks = await readAPIResponse(response);
         renderBookList();
     } catch (error) {
         console.error('Error loading books:', error);
@@ -369,45 +364,56 @@ function selectBook(book) {
     loadChapter();
     updateURL();
     
-    // Auto-hide sidebar on mobile after selection
-    if (window.innerWidth <= 1024 && sidebarVisible) {
-        sidebar.classList.add('collapsed');
-        contentWrapper.classList.add('sidebar-collapsed');
-        toggleSidebarBtn.classList.add('sidebar-hidden');
-        sidebarOverlay.classList.remove('active');
-        sidebarIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>';
-        sidebarVisible = false;
-    }
+    if (window.innerWidth <= 1024) setSidebarVisible(false);
 }
 
+function setSidebarVisible(visible) {
+    sidebarVisible = visible;
+    sidebar.classList.toggle('collapsed', !visible);
+    sidebar.inert = !visible;
+    contentWrapper.classList.toggle('sidebar-collapsed', !visible);
+    toggleSidebarBtn.classList.toggle('sidebar-hidden', !visible);
+    toggleSidebarBtn.setAttribute('aria-expanded', String(visible));
+    const label = visible ? 'Hide navigation' : 'Show navigation';
+    toggleSidebarBtn.setAttribute('aria-label', label);
+    toggleSidebarBtn.title = label;
+    sidebarOverlay.classList.toggle('active', visible && window.innerWidth <= 1024);
+    sidebarIcon.innerHTML = visible
+        ? '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>'
+        : '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>';
+}
+
+// Read API failures before decoding a successful JSON response.
+async function readAPIResponse(response) {
+    if (!response.ok) {
+        const body = await response.text();
+        let message = body;
+        try { message = JSON.parse(body).error || body; } catch (_) {}
+        throw new Error(message || `Request failed (${response.status})`);
+    }
+    return response.json();
+}
+
+let chapterRequestID = 0;
 // Load and display a specific chapter
 async function loadChapter() {
     if (!currentBook) return;
-    
+    const requestID = ++chapterRequestID;
+    lastLoadedVerses = null;
     try {
         versesContainer.innerHTML = '<div class="text-center text-gray-500 py-8">Loading...</div>';
         
         // Build URL with filter parameters
         let url = `/api/chapter?book=${encodeURIComponent(currentBook)}&chapter=${currentChapter}&translation=${selectedTranslation}`;
         
-        // Add filter parameters (only add if user-specific filters differ from defaults)
-        if (currentUserId) {
-            // Let backend use user's saved preferences by not passing filter params
-            // This allows the backend to read from user's database preferences
-        } else {
-            // For unauthenticated users, use UI state
-            url += `&showStrongs=${osisFilters.showStrongs}`;
-            url += `&showFootnotes=${osisFilters.showFootnotes}`;
-            url += `&showScripref=${osisFilters.showScripref}`;
-            url += `&showHeadings=${osisFilters.showHeadings}`;
-            url += `&showRedLetters=${osisFilters.showRedLetters}`;
-            url += `&showLemma=${osisFilters.showLemma}`;
-            url += `&showMorph=${osisFilters.showMorph}`;
-            url += `&showXlit=${osisFilters.showXlit}`;
+        // Explicit UI state avoids racing the asynchronous preference save.
+        for (const [key, value] of Object.entries(osisFilters)) {
+            url += `&${key}=${value}`;
         }
-        
+
         const response = await fetch(url);
-        const data = await response.json();
+        const data = await readAPIResponse(response);
+        if (requestID !== chapterRequestID) return;
 
         // Cache verses for client-side re-rendering
         lastLoadedVerses = data.verses || null;
@@ -440,8 +446,9 @@ async function loadChapter() {
         window.scrollTo({ top: 0, behavior: 'smooth' });
         
     } catch (error) {
+        if (requestID !== chapterRequestID) return;
         console.error('Error loading chapter:', error);
-        versesContainer.innerHTML = '<div class="text-red-500 text-center py-8">Error loading chapter</div>';
+        versesContainer.innerHTML = `<div class="text-red-500 text-center py-8">${escapeHtml(error.message)}</div>`;
     }
 }
 
@@ -583,7 +590,7 @@ async function renderVerses(verses) {
         }
 
         // Show lemma/xlit annotations when their filters are enabled
-        if (strongsNumbers.length > 0 && ((filterLemmaCheckbox && filterLemmaCheckbox.checked) || (filterXlitCheckbox && filterXlitCheckbox.checked))) {
+        if (strongsNumbers.length > 0 && ((filterLemmaCheckbox && filterLemmaCheckbox.checked) || (filterXlitCheckbox && filterXlitCheckbox.checked) || (filterMorphCheckbox && filterMorphCheckbox.checked))) {
             let annHtml = '<div class="word-annotations text-sm text-gray-600 mt-1">';
             annHtml += strongsNumbers.map(s => {
                 const parts = [];
@@ -598,6 +605,9 @@ async function renderVerses(verses) {
                 if (filterXlitCheckbox && filterXlitCheckbox.checked && s.xlit) {
                     const xlitDisplay = s.xlit.replace(/^Latn:/, '');
                     parts.push(`<span class="xlit">Xlit: ${escapeHtml(xlitDisplay)}</span>`);
+                }
+                if (filterMorphCheckbox && filterMorphCheckbox.checked && s.morph) {
+                    parts.push(`<span class="morph">Morphology: ${escapeHtml(s.morph)}</span>`);
                 }
                 if (parts.length === 0) return '';
                 return `<div class="annotation-item">${parts.join(' | ')} <span class="annotation-word text-gray-500">— ${escapeHtml(s.word)}</span></div>`;
@@ -781,18 +791,20 @@ function createSingleReferenceLink(bookAbbrev, chapter, verse, displayText) {
     return `<a href="${refUrl}" target="_blank" class="reference-link" data-book="${escapeHtml(fullBookName)}" data-chapter="${chapter}" data-verse="${verse}">${escapeHtml(displayText)}</a>`;
 }
 
-// Format verse text - allows <i> and <sup> tags, escapes everything else
+// Preserve supported scripture markup while escaping text and rejecting unsafe attributes.
 function formatVerseText(text, verseNum) {
     if (!text) return '';
-    // Allow OSIS tags: <i>, <b>, <sup>, <span>, <small>, <strong>, <em>, <u>, <s>, <mark>, <sub>, <ruby>, <rt>, <rb>, <rp>, <br>, <w>, <div>, <p>
-    // Remove all other tags for safety
-    // This regex will keep allowed tags and escape everything else
-    const allowedTags = /<(\/?)(i|b|sup|span|small|strong|em|u|s|mark|sub|ruby|rt|rb|rp|br|w|div|p)(\s+[^>]*)?>/gi;
-    // Escape everything, then unescape allowed tags
-    let html = escapeHtml(text);
-    html = html.replace(/&lt;(\/?)(i|b|sup|span|small|strong|em|u|s|mark|sub|ruby|rt|rb|rp|br|w|div|p)(\s+[^&]*)&gt;/gi, '<$1$2$3>');
-    html = html.replace(/&lt;(\/?)(i|b|sup|span|small|strong|em|u|s|mark|sub|ruby|rt|rb|rp|br|w|div|p)&gt;/gi, '<$1$2>');
-    return html;
+    const allowedTags = /^(i|b|sup|span|small|strong|em|u|s|mark|sub|ruby|rt|rb|rp|br|w|div|p)$/i;
+    return text.split(/(<[^>]*>)/g).map(part => {
+        const tag = part.match(/^<(\/?)([a-z]+)(\s[^>]*)?>$/i);
+        if (!tag || !allowedTags.test(tag[2])) return escapeHtml(part);
+        const name = tag[2].toLowerCase();
+        if (tag[1]) return `</${name}>`;
+        // The renderer emits classes for footnotes, cross-references, and red letters.
+        // Do not pass through event handlers, styles, or other source attributes.
+        const className = (tag[3] || '').match(/(?:^|\s)class\s*=\s*["']([a-z0-9_ -]+)["']/i);
+        return `<${name}${className ? ` class="${className[1]}"` : ''}>`;
+    }).join('');
 }
 
 // Navigate to a specific book and chapter (and optionally verse or verse range)
@@ -835,22 +847,14 @@ function navigateToReference(bookName, chapter, verse = null) {
         });
     }
 
-    // Filter checkboxes
-    if (filterStrongsCheckbox) filterStrongsCheckbox.addEventListener('change', handleFilterChange);
-    if (filterFootnotesCheckbox) filterFootnotesCheckbox.addEventListener('change', handleFilterChange);
-    if (filterScriprefCheckbox) filterScriprefCheckbox.addEventListener('change', handleFilterChange);
-    if (filterHeadingsCheckbox) filterHeadingsCheckbox.addEventListener('change', handleFilterChange);
-    if (filterRedLettersCheckbox) filterRedLettersCheckbox.addEventListener('change', handleFilterChange);
-    if (filterLemmaCheckbox) filterLemmaCheckbox.addEventListener('change', handleFilterChange);
-    if (filterMorphCheckbox) filterMorphCheckbox.addEventListener('change', handleFilterChange);
-    if (filterXlitCheckbox) filterXlitCheckbox.addEventListener('change', handleFilterChange);
+
 }
 
 // Escape HTML to prevent XSS
 function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
-    return div.innerHTML;
+    return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 // Helper function to generate profile picture HTML
@@ -913,6 +917,15 @@ function updateChapterSelector() {
 
 // Setup event listeners
 function setupEventListeners() {
+    // Filter checkboxes
+    if (filterStrongsCheckbox) filterStrongsCheckbox.addEventListener('change', handleFilterChange);
+    if (filterFootnotesCheckbox) filterFootnotesCheckbox.addEventListener('change', handleFilterChange);
+    if (filterScriprefCheckbox) filterScriprefCheckbox.addEventListener('change', handleFilterChange);
+    if (filterHeadingsCheckbox) filterHeadingsCheckbox.addEventListener('change', handleFilterChange);
+    if (filterRedLettersCheckbox) filterRedLettersCheckbox.addEventListener('change', handleFilterChange);
+    if (filterLemmaCheckbox) filterLemmaCheckbox.addEventListener('change', handleFilterChange);
+    if (filterMorphCheckbox) filterMorphCheckbox.addEventListener('change', handleFilterChange);
+    if (filterXlitCheckbox) filterXlitCheckbox.addEventListener('change', handleFilterChange);
     prevChapterBtn.addEventListener('click', () => {
         if (currentChapter > 1) {
             currentChapter--;
@@ -1013,40 +1026,17 @@ function setupEventListeners() {
         });
     }
     
-    // Toggle sidebar button
+    // The header control stays available when navigation is hidden.
     if (toggleSidebarBtn) {
-        toggleSidebarBtn.addEventListener('click', () => {
-            sidebarVisible = !sidebarVisible;
-            if (sidebarVisible) {
-                sidebar.classList.remove('collapsed');
-                contentWrapper.classList.remove('sidebar-collapsed');
-                toggleSidebarBtn.classList.remove('sidebar-hidden');
-                sidebarOverlay.classList.add('active');
-                sidebarIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>';
-            } else {
-                sidebar.classList.add('collapsed');
-                contentWrapper.classList.add('sidebar-collapsed');
-                toggleSidebarBtn.classList.add('sidebar-hidden');
-                sidebarOverlay.classList.remove('active');
-                sidebarIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>';
-            }
-        });
+        toggleSidebarBtn.addEventListener('click', () => setSidebarVisible(!sidebarVisible));
     }
-    
-    // Close sidebar when clicking overlay
     if (sidebarOverlay) {
-        sidebarOverlay.addEventListener('click', () => {
-            if (sidebarVisible && window.innerWidth <= 1024) {
-                sidebar.classList.add('collapsed');
-                contentWrapper.classList.add('sidebar-collapsed');
-                toggleSidebarBtn.classList.add('sidebar-hidden');
-                sidebarOverlay.classList.remove('active');
-                sidebarIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>';
-                sidebarVisible = false;
-            }
-        });
+        sidebarOverlay.addEventListener('click', () => setSidebarVisible(false));
     }
-    
+    window.addEventListener('resize', () => {
+        sidebarOverlay.classList.toggle('active', sidebarVisible && window.innerWidth <= 1024);
+    });
+
     // Handle reference link clicks with event delegation
     versesContainer.addEventListener('click', (e) => {
         if (e.target.classList.contains('reference-link')) {
@@ -1260,6 +1250,7 @@ async function checkAuthStatus() {
                 userPicDiv.innerHTML = getProfilePictureHTML(data, 'w-8 h-8');
             }
             
+            initializeChapterNotes();
             // Load filter preferences
             await loadFilterPreferences();
             
@@ -1291,7 +1282,6 @@ async function checkAuthStatus() {
             });
             
             // Load user groups for verse comments
-            loadUserGroupsForComments();
         } else {
             // Show login button, hide user menu and community menu
             userMenu.classList.add('hidden');
@@ -1310,7 +1300,7 @@ async function checkAuthStatus() {
 // ============ VERSE COMMENTS (INLINE NOTES) ============
 
 // Load user groups for verse comments dropdown
-async function loadUserGroupsForComments() {
+async function initializeChapterNotes() {
     const createPersonalNoteBtn = document.getElementById('createPersonalNoteBtn');
     const createGroupNoteBtn = document.getElementById('createGroupNoteBtn');
     const groupNoteSelector = document.getElementById('groupNoteSelector');
@@ -1467,6 +1457,7 @@ async function loadUserGroupsForComments() {
     groupNoteSelector.addEventListener('change', (e) => {
         selectedGroupId = e.target.value ? parseInt(e.target.value) : null;
         createGroupNoteBtn.disabled = !selectedGroupId;
+        document.getElementById('groupNotesList').replaceChildren();
         
         // Save to unified preferences
         saveUIPreferences();
@@ -1511,7 +1502,11 @@ function restartNotesPolling() {
 }
 
 // Poll for notes updates
+function hasNoteDraft() {
+    return [...document.querySelectorAll('#notesSection textarea, #versesContainer textarea')].some(input => input.value.trim());
+}
 async function pollNotesUpdates() {
+    if (!currentBook || hasNoteDraft()) return;
     try {
         let response;
         if (currentNoteType === 'personal') {
@@ -1527,7 +1522,7 @@ async function pollNotesUpdates() {
         
         // Compare with current notes to see if update is needed
         const notesJson = JSON.stringify(notes);
-        if (notesJson !== currentNotesData) {
+        if (notesJson !== currentNotesData && !hasNoteDraft()) {
             currentNotesData = notesJson;
             const containerId = currentNoteType === 'personal' ? 'personalNotesList' : 'groupNotesList';
             displayNotes(notes, containerId, currentUserId);
@@ -1553,7 +1548,7 @@ async function pollOpenComments() {
             
             if (commentsJson !== cachedData) {
                 commentsData.set(noteId, commentsJson);
-                await updateCommentsDisplay(noteId, comments);
+                renderNoteCommentsSection(noteId, comments, document.getElementById(`comments-section-${noteId}`));
             }
         } catch (error) {
             console.debug('Error polling comments:', error);
@@ -1611,7 +1606,9 @@ async function loadUserGroups() {
     try {
         const response = await fetch('/api/groups/list');
         if (!response.ok) throw new Error('Failed to load groups');
-        userGroups = await response.json();
+        userGroups = await response.json() || [];
+        const createGroupNoteBtn = document.getElementById('createGroupNoteBtn');
+        createGroupNoteBtn.disabled = !selectedGroupId;
         
         const selector = document.getElementById('groupNoteSelector');
         selector.innerHTML = '<option value="">Select a study group...</option>' +
@@ -1645,7 +1642,7 @@ function displayNotes(notes, containerId, currentUserId) {
         // Check if note is temporary (not yet saved to server)
         const isTemp = String(note.id).startsWith('temp-');
         // Escape content for use in onclick attribute - replace backticks and backslashes
-        const escapedContent = escapeHtml(note.content).replace(/\\/g, '\\\\').replace(/`/g, '\\`');
+        const escapedContent = escapeHtml(note.content).replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$\{/g, '\\${');
         
         return `
         <div class="bg-white rounded-lg p-4 shadow-sm border border-gray-200 ${isTemp ? 'opacity-70' : ''}" id="note-${note.id}">
@@ -1708,12 +1705,12 @@ function showNoteEditor(title, initialContent, onSave) {
     modal.classList.add('flex');
     contentEl.focus();
     
-    const handleSave = () => {
+    const handleSave = async () => {
         const content = contentEl.value.trim();
-        if (content) {
-            onSave(content);
-        }
-        closeNoteEditor();
+        if (!content) { contentEl.focus(); return; }
+        saveBtn.disabled = true;
+        try { if (await onSave(content) !== false) closeNoteEditor(); }
+        finally { saveBtn.disabled = false; }
     };
     
     const handleCancel = () => {
@@ -1782,7 +1779,7 @@ function showNoteMessage(title, message) {
 // Show create note dialog
 function showCreateNoteDialog(type, groupId = null) {
     showNoteEditor('Create Note', '', (content) => {
-        createNote(content, type, groupId);
+        return createNote(content, type, groupId);
     });
 }
 
@@ -1832,7 +1829,9 @@ async function createNote(content, type, groupId = null) {
         currentNotesData = null;
     } catch (error) {
         console.error('Error creating note:', error);
+        removeNoteFromUI(optimisticNote.id);
         showNoteMessage('Error', 'Failed to create note: ' + error.message);
+        return false;
     }
 }
 
@@ -1868,6 +1867,7 @@ async function editNote(noteId, currentContent) {
         } catch (error) {
             console.error('Error updating note:', error);
             showNoteMessage('Error', 'Failed to update note');
+            return false;
         }
     });
 }
@@ -1914,7 +1914,7 @@ function addNoteToUI(note) {
     // Check if note is temporary (not yet saved to server)
     const isTemp = String(note.id).startsWith('temp-');
     // Escape content for use in onclick attribute - replace backticks and backslashes
-    const escapedContent = escapeHtml(note.content).replace(/\\/g, '\\\\').replace(/`/g, '\\`');
+    const escapedContent = escapeHtml(note.content).replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$\{/g, '\\${');
     
     const noteDiv = document.createElement('div');
     noteDiv.className = `bg-white rounded-lg p-4 shadow-sm border border-gray-200 ${isTemp ? 'opacity-70' : ''}`;
@@ -1983,7 +1983,7 @@ function replaceNoteInUI(tempId, realNote) {
     if (!tempElement) return;
     
     const canEdit = currentUserId && realNote.user_id === currentUserId;
-    const escapedContent = escapeHtml(realNote.content).replace(/\\/g, '\\\\').replace(/`/g, '\\`');
+    const escapedContent = escapeHtml(realNote.content).replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$\{/g, '\\${');
     
     // Create the replacement note element
     const noteDiv = document.createElement('div');
@@ -2034,7 +2034,7 @@ function updateNoteContentInUI(noteId, newContent) {
         // Update the edit button's onclick to use new content
         const editBtn = noteElement.querySelector('button[onclick*="editNote"]');
         if (editBtn) {
-            const escapedContent = escapeHtml(newContent).replace(/\\/g, '\\\\').replace(/`/g, '\\`');
+            const escapedContent = escapeHtml(newContent).replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$\{/g, '\\${');
             editBtn.setAttribute('onclick', `editNote('${noteId}', \`${escapedContent}\`)`);
         }
     }
@@ -2107,73 +2107,22 @@ async function saveFilterPreferences() {
 
 // Handle filter checkbox changes
 function handleFilterChange() {
-    // Determine which filters changed and apply client-side-only toggles instantly.
-    const prev = { ...osisFilters };
-    // Update state from checkboxes
-    osisFilters.showStrongs = filterStrongsCheckbox.checked;
-    osisFilters.showFootnotes = filterFootnotesCheckbox.checked;
-    osisFilters.showScripref = filterScriprefCheckbox.checked;
-    osisFilters.showHeadings = filterHeadingsCheckbox.checked;
-    osisFilters.showRedLetters = filterRedLettersCheckbox.checked;
-    osisFilters.showLemma = filterLemmaCheckbox.checked;
-    osisFilters.showMorph = filterMorphCheckbox.checked;
-    osisFilters.showXlit = filterXlitCheckbox.checked;
-
-    // Save to backend (debounced would be better, but this works)
-    if (currentUserId) {
-        saveFilterPreferences();
+    const controls = {
+        showStrongs: filterStrongsCheckbox, showFootnotes: filterFootnotesCheckbox,
+        showScripref: filterScriprefCheckbox, showHeadings: filterHeadingsCheckbox,
+        showRedLetters: filterRedLettersCheckbox, showLemma: filterLemmaCheckbox,
+        showMorph: filterMorphCheckbox, showXlit: filterXlitCheckbox
+    };
+    for (const [key, control] of Object.entries(controls)) {
+        if (control) osisFilters[key] = control.checked;
     }
-
-    // Client-only filters that do not require a server re-fetch
-    const clientOnlyChanged = (prev.showLemma !== osisFilters.showLemma) || (prev.showXlit !== osisFilters.showXlit) || (prev.showMorph !== osisFilters.showMorph);
-    if (clientOnlyChanged) {
-        // If user enabled lemma/xlit/morph and we have cached verses, check whether cached data includes annotations.
-        const wantsAnnotations = osisFilters.showLemma || osisFilters.showXlit || osisFilters.showMorph;
-        if (lastLoadedVerses && wantsAnnotations) {
-            // Determine if any verse has strongsNumbers (server-provided annotations)
-            const hasAnyAnnotations = lastLoadedVerses.some(v => Array.isArray(v.strongsNumbers) && v.strongsNumbers.length > 0);
-            if (!hasAnyAnnotations) {
-                // Need to fetch chapter with annotations enabled from server
-                loadChapter();
-                return;
-            }
-        }
-
-        // If we have cached verses, re-render client-side so changes are instant
-        if (lastLoadedVerses) {
-            renderVerses(lastLoadedVerses);
-            return;
-        }
-
-        // Fallback: Toggle visibility of existing annotation blocks without reloading
-        const annBlocks = document.querySelectorAll('.word-annotations');
-        annBlocks.forEach(block => {
-            const lemmaElems = block.querySelectorAll('.lemma');
-            lemmaElems.forEach(e => {
-                e.style.display = (osisFilters.showLemma ? '' : 'none');
-            });
-            const xlitElems = block.querySelectorAll('.xlit');
-            xlitElems.forEach(e => {
-                e.style.display = (osisFilters.showXlit ? '' : 'none');
-            });
-        });
-
-        // If user enabled lemma/xlit but there are no annotation blocks present (server didn't render them), reload chapter to fetch annotations
-        if (wantsAnnotations && annBlocks.length === 0) {
-            loadChapter();
-            return;
-        }
-    }
-
-    // Server-side filters that require re-fetch: strongs, footnotes, scripref, headings, red letters
-    const serverSideChanged = (prev.showStrongs !== osisFilters.showStrongs) || (prev.showFootnotes !== osisFilters.showFootnotes) || (prev.showScripref !== osisFilters.showScripref) || (prev.showHeadings !== osisFilters.showHeadings) || (prev.showRedLetters !== osisFilters.showRedLetters);
-    if (serverSideChanged) {
-        loadChapter();
-    }
+    if (currentUserId) saveFilterPreferences();
+    loadChapter();
 }
 
 // Load user groups for verse comments dropdown
-async function loadUserGroupsForComments() {
+async function loadNoteCommentsInline(noteId) {
+    const section = document.getElementById(`comments-section-${noteId}`);
     if (!section) return;
     
     try {
@@ -2421,13 +2370,6 @@ window.deleteNoteComment = async function(commentId, noteId) {
         }
     });
 };
-
-// Utility function for HTML escaping
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
 
 // Reactions functionality
 const COMMON_EMOJIS = ['👍', '❤️', '🙏', '😊', '🎉', '👏'];
@@ -2841,10 +2783,12 @@ window.editVerseComment = function(commentId, currentContent) {
                 await reloadAllVisibleVerseComments();
             } else {
                 showNoteMessage('Error', 'Failed to update note');
+            return false;
             }
         } catch (error) {
             console.error('Failed to edit comment:', error);
             showNoteMessage('Error', 'Failed to update note');
+            return false;
         }
     });
 };
@@ -2976,6 +2920,7 @@ function connectWebSocket() {
 
 function handleWebSocketMessage(message) {
     const { type, action, book, chapter, verse, note_id, data } = message;
+    if (hasNoteDraft()) return;
     
     // Handle verse comments
     if (type === 'verse_comment') {

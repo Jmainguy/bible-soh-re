@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -12,13 +13,11 @@ import (
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins for now
-	},
 }
 
 // BroadcastMessage represents a message to be sent to clients
 type BroadcastMessage struct {
+	Scope   socialScope            `json:"-"`
 	Type    string                 `json:"type"`   // "verse_comment", "note_comment", "reaction"
 	Action  string                 `json:"action"` // "create", "update", "delete"
 	Data    map[string]interface{} `json:"data"`   // Additional data
@@ -30,14 +29,19 @@ type BroadcastMessage struct {
 
 // Client represents a connected WebSocket client
 type Client struct {
-	conn *websocket.Conn
-	send chan []byte
+	hub       *Hub
+	db        *Database
+	sessionID string
+	userID    int64
+	conn      *websocket.Conn
+	send      chan []byte
 }
 
 // Hub maintains connected clients and broadcasts messages
 type Hub struct {
+	stop       chan struct{}
 	clients    map[*Client]bool
-	broadcast  chan []byte
+	broadcast  chan BroadcastMessage
 	register   chan *Client
 	unregister chan *Client
 	mu         sync.RWMutex
@@ -45,7 +49,7 @@ type Hub struct {
 
 var hub = &Hub{
 	clients:    make(map[*Client]bool),
-	broadcast:  make(chan []byte, 256),
+	broadcast:  make(chan BroadcastMessage, 256),
 	register:   make(chan *Client),
 	unregister: make(chan *Client),
 }
@@ -54,6 +58,8 @@ var hub = &Hub{
 func (h *Hub) Run() {
 	for {
 		select {
+		case <-h.stop:
+			return
 		case client := <-h.register:
 			h.mu.Lock()
 			h.clients[client] = true
@@ -66,39 +72,64 @@ func (h *Hub) Run() {
 			}
 			h.mu.Unlock()
 		case message := <-h.broadcast:
-			h.mu.RLock()
+			data, err := json.Marshal(message)
+			if err != nil {
+				continue
+			}
+			h.mu.Lock()
 			for client := range h.clients {
+				session, err := client.db.GetSession(client.sessionID)
+				if err != nil || session.UserID != client.userID || !client.db.canAccessScope(message.Scope, client.userID) {
+					continue
+				}
 				select {
-				case client.send <- message:
+				case client.send <- data:
 				default:
 					close(client.send)
 					delete(h.clients, client)
 				}
 			}
-			h.mu.RUnlock()
+			h.mu.Unlock()
 		}
 	}
 }
 
 // BroadcastUpdate sends an update to all connected clients
 func BroadcastUpdate(msg BroadcastMessage) {
-	data, err := json.Marshal(msg)
-	if err != nil {
-		log.Printf("Error marshaling broadcast message: %v", err)
+	if msg.Scope.GroupID.Valid {
+		if msg.Data == nil {
+			msg.Data = map[string]interface{}{}
+		}
+		msg.Data["group_id"] = msg.Scope.GroupID.Int64
+	}
+	if publishLive != nil {
+		publishLive(msg)
 		return
 	}
-	hub.broadcast <- data
+	queueLiveUpdate(msg)
+}
+
+func queueLiveUpdate(msg BroadcastMessage) {
+	select {
+	case hub.broadcast <- msg:
+	default:
+		log.Print("Live update queue full; clients can refresh")
+	}
 }
 
 // readPump reads messages from the WebSocket connection
 func (c *Client) readPump() {
 	defer func() {
-		hub.unregister <- c
+		select {
+		case c.hub.unregister <- c:
+		case <-c.hub.stop:
+		}
 		if err := c.conn.Close(); err != nil {
 			log.Printf("Failed to close WebSocket connection: %v", err)
 		}
 	}()
 
+	c.conn.SetReadLimit(4096)
 	for {
 		_, _, err := c.conn.ReadMessage()
 		if err != nil {
@@ -119,6 +150,7 @@ func (c *Client) writePump() {
 	}()
 
 	for message := range c.send {
+		_ = c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		err := c.conn.WriteMessage(websocket.TextMessage, message)
 		if err != nil {
 			break
@@ -127,7 +159,12 @@ func (c *Client) writePump() {
 }
 
 // HandleWebSocket handles WebSocket connections
-func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
+func (h *AuthHandler) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
+	user := h.requireUser(w, r)
+	if user == nil {
+		return
+	}
+	cookie, _ := r.Cookie(sessionCookieName)
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade error: %v", err)
@@ -135,8 +172,12 @@ func HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	client := &Client{
-		conn: conn,
-		send: make(chan []byte, 256),
+		conn:      conn,
+		hub:       hub,
+		db:        h.db,
+		userID:    user.ID,
+		sessionID: cookie.Value,
+		send:      make(chan []byte, 256),
 	}
 
 	hub.register <- client

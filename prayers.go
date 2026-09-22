@@ -41,17 +41,12 @@ type PrayerComment struct {
 
 // CreatePrayerRequest creates a new prayer request
 func (d *Database) CreatePrayerRequest(groupID, userID int64, title, content string) (*PrayerRequest, error) {
-	result, err := d.db.Exec(
+	id, err := d.insert(
 		`INSERT INTO prayer_requests (group_id, user_id, title, content, status) VALUES (?, ?, ?, ?, 'active')`,
 		groupID, userID, title, content,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create prayer request: %w", err)
-	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get prayer request ID: %w", err)
 	}
 
 	return d.GetPrayerRequest(id)
@@ -220,17 +215,12 @@ func (d *Database) DeletePrayerRequest(id, userID int64) error {
 
 // CreatePrayerComment creates a comment on a prayer request
 func (d *Database) CreatePrayerComment(prayerID, userID int64, content string) (*PrayerComment, error) {
-	result, err := d.db.Exec(
+	id, err := d.insert(
 		`INSERT INTO prayer_comments (prayer_id, user_id, content) VALUES (?, ?, ?)`,
 		prayerID, userID, content,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create prayer comment: %w", err)
-	}
-
-	id, err := result.LastInsertId()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get comment ID: %w", err)
 	}
 
 	return d.GetPrayerComment(id)

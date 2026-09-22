@@ -4,11 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>My Profile - Bible Reader</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="icon" type="image/png" href="/brand-bible.png">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,600;0,700;1,400&family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
-    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/tailwind.css">
     <style>
         body {
             background-color: #f5f1e8;
@@ -60,14 +60,16 @@
             border: 4px solid #e5dcc8;
         }
     </style>
+    <link rel="stylesheet" href="/brand.css">
 </head>
 <body>
     <div class="min-h-screen">
         <!-- Header -->
-        <header class="bg-gradient-to-r from-blue-800 to-blue-900 text-white shadow-lg">
+        <header class="brand-header">
             <div class="container mx-auto px-4 py-6">
                 <div class="flex items-center justify-between">
                     <div>
+                        <a class="brand-small" href="/"><img src="/brand-bible.png" alt="" width="40" height="40">Holy Bible</a>
                         <h1 class="text-3xl font-bold" style="font-family: 'EB Garamond', Georgia, serif;">My Profile</h1>
                         <p class="text-blue-200 mt-1">Manage your account settings</p>
                     </div>

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"compress/zlib"
+	"context"
 	"embed"
 	"encoding/binary"
 	"encoding/json"
@@ -847,7 +848,7 @@ func handleBooks(w http.ResponseWriter, r *http.Request) {
 	// Get the translation to check which testaments are available
 	trans, ok := translations[translationName]
 	if !ok {
-		http.Error(w, "Translation not found", http.StatusBadRequest)
+		respondError(w, "Translation not found", http.StatusBadRequest)
 		return
 	}
 
@@ -876,7 +877,7 @@ func handleBooks(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(books); err != nil {
 		log.Printf("Failed to encode books: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		respondError(w, "Internal server error", http.StatusInternalServerError)
 	}
 }
 
@@ -886,12 +887,16 @@ func handleChapter(w http.ResponseWriter, r *http.Request) {
 	translation := r.URL.Query().Get("translation")
 
 	if translation == "" {
+		if len(translationNames) == 0 {
+			respondError(w, "No translations available", http.StatusServiceUnavailable)
+			return
+		}
 		translation = translationNames[0]
 	}
 
 	chapter, err := strconv.Atoi(chapterStr)
 	if err != nil {
-		http.Error(w, "Invalid chapter number", http.StatusBadRequest)
+		respondError(w, "Invalid chapter number", http.StatusBadRequest)
 		return
 	}
 
@@ -910,7 +915,7 @@ func handleChapter(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// If user is authenticated and no explicit filters in query, use their preferences
-	if cookie, err := r.Cookie("session"); err == nil {
+	if cookie, err := r.Cookie(sessionCookieName); err == nil {
 		if session, err := authDB.GetSession(cookie.Value); err == nil {
 			if user, err := authDB.GetUserByID(session.UserID); err == nil {
 				// Only use user preferences if no explicit filter params in URL
@@ -945,7 +950,7 @@ func handleChapter(w http.ResponseWriter, r *http.Request) {
 	includeRaw := r.URL.Query().Get("rawOSIS") == "1"
 	verses, err := getChapter(translation, book, chapter, filters, includeRaw)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		respondError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -958,7 +963,7 @@ func handleChapter(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		log.Printf("Failed to encode response: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		respondError(w, "Internal server error", http.StatusInternalServerError)
 	}
 }
 
@@ -991,7 +996,7 @@ func main() {
 	for _, tc := range config.Translations {
 		translationPath := filepath.Join("translations", tc.Name)
 		if err := loadTranslation(tc.Name, translationPath, tc.FullName, tc.Description, tc.Testaments); err != nil {
-			log.Printf("Warning: Could not load %s: %v", tc.Name, err)
+			log.Fatalf("Could not load required translation %s: %v", tc.Name, err)
 		} else {
 			translationNames = append(translationNames, tc.Name)
 		}
@@ -1070,7 +1075,11 @@ func main() {
 	} // Setup HTTP routes
 
 	// Initialize database
-	db, err := NewDatabase("bible.db")
+	dsn := os.Getenv("DATABASE_URL")
+	if dsn == "" {
+		dsn = "bible.db"
+	}
+	db, err := NewDatabase(dsn)
 	if err != nil {
 		log.Fatalf("Failed to initialize database: %v", err)
 	}
@@ -1083,6 +1092,25 @@ func main() {
 	// Set global database reference for handleChapter filter preferences
 	authDB = db
 
+	if baseURL := os.Getenv("BASE_URL"); baseURL != "" {
+		config.Auth.BaseURL = baseURL
+	}
+	if db.db.postgres {
+		stop, err := db.startLiveUpdates(dsn)
+		if err != nil {
+			log.Fatalf("Failed to start live updates: %v", err)
+		}
+		defer stop()
+	}
+	http.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := db.db.PingContext(ctx); err != nil {
+			http.Error(w, "Database unavailable", 503)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
 	// Initialize authentication handler
 	authHandler := NewAuthHandler(db, &config.Auth)
 
@@ -1141,7 +1169,7 @@ func main() {
 	http.HandleFunc("/api/reactions/summary", authHandler.handleGetReactionsSummary)
 
 	// WebSocket route
-	http.HandleFunc("/ws", HandleWebSocket)
+	http.HandleFunc("/ws", authHandler.HandleWebSocket)
 
 	// API routes
 	http.HandleFunc("/api/translations", handleTranslations)
@@ -1185,7 +1213,7 @@ func main() {
 			// If book is specified but translation is not, redirect with user's default translation
 			if book != "" && translation == "" {
 				// Try to get the current user's default translation
-				if cookie, err := r.Cookie("session_id"); err == nil {
+				if cookie, err := r.Cookie(sessionCookieName); err == nil {
 					if session, err := db.GetSession(cookie.Value); err == nil {
 						if user, err := db.GetUserByID(session.UserID); err == nil && user.DefaultTranslation != "" {
 							// Redirect to the same URL with the user's default translation
@@ -1197,9 +1225,9 @@ func main() {
 						}
 					}
 				}
-				// If not logged in or no default set, redirect with NASB as default
+				// If not logged in or no default set, use the first loaded translation
 				query := r.URL.Query()
-				query.Set("translation", "nasb")
+				query.Set("translation", translationNames[0])
 				r.URL.RawQuery = query.Encode()
 				http.Redirect(w, r, r.URL.String(), http.StatusFound)
 				return
@@ -1235,6 +1263,10 @@ func main() {
 		}
 	}()
 
-	log.Println("Server starting on http://localhost:8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	addr := os.Getenv("LISTEN_ADDR")
+	if addr == "" {
+		addr = ":8080"
+	}
+	log.Printf("Server listening on %s", addr)
+	log.Fatal(http.ListenAndServe(addr, nil))
 }

@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.2](https://github.com/Jmainguy/bible-soh-re/compare/v1.3.1...v1.3.2) (2026-09-22)
+
+
+### Bug Fixes
+
+* add a lost-sheep 404 page with a path back to reading ([3aff3c6](https://github.com/Jmainguy/bible-soh-re/commit/3aff3c6ddbcf270c2f2137b61dfb487c6134fe12))
+* give lost readers a branded 404 recovery page ([b57ad12](https://github.com/Jmainguy/bible-soh-re/commit/b57ad1250641bdc1a0207c708976752709b88203))
+
 ## [1.3.1](https://github.com/Jmainguy/bible-soh-re/compare/v1.3.0...v1.3.1) (2026-09-22)
 
 

@@ -20,7 +20,7 @@ spec:
         fsGroup: 65532
       containers:
       - name: bible-soh-re
-        image: zot.soh.re/jmainguy/bible-soh-re:v1.3.1
+        image: zot.soh.re/jmainguy/bible-soh-re:v1.3.2
         workingDir: /
         env:
         - name: DATABASE_URL

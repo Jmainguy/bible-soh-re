@@ -830,6 +830,8 @@ func main() {
 		log.Fatal(err)
 	}
 
+	staticHandler := newStaticHandler(staticFS)
+
 	// Custom handler for root path to support URL parameters for deep linking
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// Only handle root path and index.html
@@ -863,7 +865,7 @@ func main() {
 		}
 
 		// Serve static files normally
-		http.FileServer(http.FS(staticFS)).ServeHTTP(w, r)
+		staticHandler.ServeHTTP(w, r)
 	})
 
 	// Start WebSocket hub

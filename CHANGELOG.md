@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.1](https://github.com/Jmainguy/bible-soh-re/compare/v1.3.0...v1.3.1) (2026-09-22)
+
+
+### Bug Fixes
+
+* restore account pages and password sign-up in production ([b4a70bd](https://github.com/Jmainguy/bible-soh-re/commit/b4a70bd6caf509e609c72c20cce09e892c1e7930))
+* serve embedded account pages and enable password-only sign-up ([0e3808b](https://github.com/Jmainguy/bible-soh-re/commit/0e3808b0f4f6b8aee49fc2871c1be591d8e19c9b))
+
 ## [1.3.0](https://github.com/Jmainguy/bible-soh-re/compare/v1.2.7...v1.3.0) (2026-09-22)
 
 

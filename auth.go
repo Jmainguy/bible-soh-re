@@ -153,6 +153,10 @@ func (h *AuthHandler) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(password) < 8 || len(password) > 72 {
+		http.Redirect(w, r, "/register?error="+url.QueryEscape("Password must be between 8 and 72 characters."), http.StatusSeeOther)
+		return
+	}
 	// Create user
 	user, err := h.db.CreateUser(email, firstName, lastName, password)
 	if err != nil {

@@ -28,6 +28,8 @@ spec:
             secretKeyRef:
               name: postgres-cluster-app
               key: uri
+        - name: TRANSLATIONS_DIR
+          value: /translations
         - name: BASE_URL
           value: https://bible.soh.re
         ports:

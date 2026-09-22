@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex">
+    <title>A little lost — Holy Bible</title>
+    <link rel="icon" type="image/png" href="/brand-bible.png">
+    <link rel="stylesheet" href="/brand.css">
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; min-height: 100svh; padding: 32px 24px; display: grid; place-items: center; font-family: system-ui, sans-serif; }
+        main { width: min(100%, 600px); text-align: center; }
+        .home { display: inline-flex; align-items: center; gap: 12px; color: var(--pine); text-decoration: none; font: 24px Georgia, serif; }
+        .home img { width: 54px; height: 54px; object-fit: contain; }
+        .scene { position: relative; margin: 40px auto 24px; display: flex; align-items: center; justify-content: center; gap: 12px; color: #c5d1c3; font: 160px/1 Georgia, serif; }
+        .sheep { display: grid; place-items: center; width: 138px; height: 138px; border: 2px dashed #b8c8b5; border-radius: 50%; font-size: 76px; background: #eaf0e4; transform: rotate(-8deg); }
+        h1 { margin: 0 0 14px; color: var(--pine); font: 40px/1.15 Georgia, serif; letter-spacing: -.8px; }
+        .intro { margin: 0 auto; max-width: 38ch; color: #5d6861; font-size: 16px; line-height: 1.65; }
+        blockquote { margin: 30px 0; padding: 26px 24px; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); font: 22px/1.5 Georgia, serif; }
+        cite { display: block; margin-top: 14px; font: 12px/1.5 system-ui, sans-serif; letter-spacing: .08em; color: #5d6861; }
+        .actions { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 20px; }
+        .actions a { color: var(--pine); text-underline-offset: 4px; font-size: 15px; }
+        .actions .primary { display: inline-block; padding: 14px 22px; border-radius: 8px; background: var(--pine); color: #fffef9; text-decoration: none; }
+        .primary:hover { background: #32564a; }
+        .footnote { margin-top: 30px; color: #5d6861; font-size: 12px; }
+        @media(max-width: 480px) { .scene { font-size: 116px; margin-top: 30px; gap: 6px; } .sheep { width: 106px; height: 106px; font-size: 60px; } h1 { font-size: 32px; } blockquote { font-size: 20px; padding-inline: 8px; } }
+    </style>
+</head>
+<body>
+    <main>
+        <a class="home" href="/"><img src="/brand-bible.png" alt="" width="54" height="54">Holy Bible</a>
+        <div class="scene" aria-hidden="true"><span>4</span><span class="sheep">🐑</span><span>4</span></div>
+        <h1>This page has wandered off.</h1>
+        <p class="intro">Looks like we’ve strayed from the path. Let’s get you back to the Word.</p>
+        <blockquote>
+            “For the Son of Man has come to seek and to save that which was lost.”
+            <cite>LUKE 19:10 · NASB</cite>
+        </blockquote>
+        <nav class="actions" aria-label="Find your way back">
+            <a class="primary" href="/">Back to reading</a>
+            <a href="/?translation=nasb&amp;book=Luke&amp;chapter=19&amp;verse=10">Read the verse →</a>
+        </nav>
+        <p class="footnote">404 · Page not found. The sheep is just as surprised.</p>
+    </main>
+</body>
+</html>

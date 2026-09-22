@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.0](https://github.com/Jmainguy/bible-soh-re/compare/v1.2.7...v1.3.0) (2026-09-22)
+
+
+### Features
+
+* complete study groups, refresh branding, and support PostgreSQL replicas ([a10eee9](https://github.com/Jmainguy/bible-soh-re/commit/a10eee9d2b14e6a5ffb21c87746d911ca9db8235))
+* release Bible reader branding and private study groups ([227a623](https://github.com/Jmainguy/bible-soh-re/commit/227a623de9e129965d5568e69e4683e1fb1f72ca))
+
+
+### Bug Fixes
+
+* clear release lint checks and remove obsolete verse parser ([6c22787](https://github.com/Jmainguy/bible-soh-re/commit/6c227874c91f75629eb63837a719a9da84a2223b))
+
 ## [1.2.7](https://github.com/Jmainguy/bible-soh-re/compare/v1.2.6...v1.2.7) (2026-08-24)
 
 

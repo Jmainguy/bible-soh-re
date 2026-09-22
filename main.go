@@ -819,22 +819,7 @@ func main() {
 	http.HandleFunc("/api/books", handleBooks)
 	http.HandleFunc("/api/chapter", handleChapter)
 
-	// Serve static files
-	http.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "static/login.html")
-	})
-	http.HandleFunc("/register", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "static/register.html")
-	})
-	http.HandleFunc("/groups", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "static/groups.html")
-	})
-	http.HandleFunc("/group", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "static/group.html")
-	})
-	http.HandleFunc("/profile", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "static/profile.html")
-	})
+	registerPageRoutes(http.DefaultServeMux)
 
 	// Serve uploaded files
 	http.Handle("/uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir("static/uploads"))))

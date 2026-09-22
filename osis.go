@@ -33,54 +33,8 @@ var DefaultFilters = OSISFilters{
 	ShowXlit:       false,
 }
 
-// OSIS tag patterns
-var (
-	// Word markup with strongs/lemma/morph
-	wordTagPattern = regexp.MustCompile(`<w\s+([^>]+)>([^<]*)</w>`)
-
-	// Notes (footnotes, cross-references, etc.)
-	noteTagPattern = regexp.MustCompile(`<note\s+([^>]*?)(?:type="([^"]+)")?([^>]*)>(.*?)</note>`)
-
-	// Divine name markup (LORD, GOD, etc.)
-	divineNamePattern = regexp.MustCompile(`<divineName>([^<]+)</divineName>`)
-
-	// Reference links
-	refTagPattern = regexp.MustCompile(`<reference[^>]*osisRef="([^"]+)"[^>]*>([^<]+)</reference>`)
-
-	// Emphasized text
-	hiPattern = regexp.MustCompile(`<hi\s+type="([^"]+)">([^<]+)</hi>`)
-
-	// Transliteration
-	xlitPattern = regexp.MustCompile(`<w[^>]*xlit="([^"]+)"[^>]*>([^<]*)</w>`)
-
-	// Quote markers
-	qTagPattern    = regexp.MustCompile(`<q\s+([^>]*)>`)
-	qEndTagPattern = regexp.MustCompile(`</q>`)
-
-	// Catch words in notes
-	catchWordTagPattern = regexp.MustCompile(`<catchWord>([^<]+)</catchWord>`)
-
-	// Trans change (added words)
-	transChangeTagPattern = regexp.MustCompile(`<transChange\s+type="added">([^<]*)</transChange>`)
-
-	// Line breaks
-	lbPattern = regexp.MustCompile(`<lb\s*/?>`)
-
-	// Milestones (paragraph markers, etc.)
-	milestoneTagPattern = regexp.MustCompile(`<milestone[^>]*/>`)
-
-	// Verse markers
-	verseTagPattern = regexp.MustCompile(`<verse[^>]*/>`)
-
-	// Chapter markers
-	chapterTagPattern = regexp.MustCompile(`<chapter[^>]*/>`)
-
-	// Title patterns (already exist in main.go but included here for completeness)
-	titleSectionPattern  = regexp.MustCompile(`<title[^>]*(?:subType="x-preverse"|type="x-s")[^>]*>([^<]+)</title>`)
-	titleDescPattern     = regexp.MustCompile(`<title[^>]*type="x-description"[^>]*>([^<]+)</title>`)
-	titleParallelPattern = regexp.MustCompile(`<title[^>]*type="parallel"[^>]*>(.*?)</title>`)
-	titleGenericPattern  = regexp.MustCompile(`<title>([^<]+)</title>`)
-)
+// Reference links within annotations.
+var refTagPattern = regexp.MustCompile(`<reference[^>]*osisRef="([^"]+)"[^>]*>([^<]+)</reference>`)
 
 // ParsedVerse represents a parsed OSIS verse with structured data
 type ParsedVerse struct {
@@ -271,18 +225,6 @@ func parseOSISUsingXML(osisText string, filters OSISFilters) ParsedVerse {
 				if len(strongs) > 0 || cleanLemma != "" || xlitVal != "" || morphVal != "" {
 					finalLemma := cleanLemma
 					finalXlit := xlitVal
-					// If the original `lemma` attribute existed but cleaned to empty
-					// (i.e. it only contained Strong's tokens), we assume this
-					// translation does not provide lemma text and should not
-					// be supplemented from a hard-coded lexicon. Only attempt
-					// a lexicon lookup when there was no `lemma` attribute
-					// at all.
-					if finalLemma == "" && len(strongs) > 0 && lemmaVal == "" {
-						// lexicon lookup would go here if enabled
-					}
-					// Only expose lemma/xlit when the original <w lemma="..."> attribute
-					// provided lemma text. If the lemma was derived from a lexicon lookup
-					// (i.e., original `lemmaVal` was empty), do not populate `Lemma` here.
 					outLemma := ""
 					outXlit := finalXlit
 					if lemmaVal != "" {
@@ -350,10 +292,10 @@ func parseOSISUsingXML(osisText string, filters OSISFilters) ParsedVerse {
 							depth--
 						}
 						if depth > 0 {
-							enc.EncodeToken(nt)
+							_ = enc.EncodeToken(nt)
 						}
 					}
-					enc.Flush()
+					_ = enc.Flush()
 					// strip inner tags
 					titleText := regexp.MustCompile(`<[^>]+>`).ReplaceAllString(buf.String(), "")
 					result.SectionTitle = strings.TrimSpace(titleText)
@@ -409,10 +351,10 @@ func parseOSISUsingXML(osisText string, filters OSISFilters) ParsedVerse {
 						depth--
 					}
 					if depth > 0 {
-						enc.EncodeToken(nt)
+						_ = enc.EncodeToken(nt)
 					}
 				}
-				enc.Flush()
+				_ = enc.Flush()
 				innerRaw := inner.String()
 				clean := strings.TrimSpace(regexp.MustCompile(`<[^>]+>`).ReplaceAllString(innerRaw, ""))
 

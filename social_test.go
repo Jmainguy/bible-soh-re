@@ -33,7 +33,7 @@ func newSocialFixture(t *testing.T) socialFixture {
 		if _, err = admin.Exec("CREATE SCHEMA " + schema); err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { admin.Exec("DROP SCHEMA " + schema + " CASCADE"); admin.Close() })
+		t.Cleanup(func() { _, _ = admin.Exec("DROP SCHEMA " + schema + " CASCADE"); _ = admin.Close() })
 		u, _ := url.Parse(pg)
 		q := u.Query()
 		q.Set("search_path", schema)
@@ -44,7 +44,7 @@ func newSocialFixture(t *testing.T) socialFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 	for id := 1; id <= 3; id++ {
 		_, err = db.db.Exec("INSERT INTO users(id,email,username,first_name,last_name) VALUES(?,?,?,?,?)", id, fmt.Sprintf("user%d@example.test", id), fmt.Sprintf("user%d", id), "Test", "User")
 		if err != nil {
@@ -127,7 +127,9 @@ func TestStudyPlanLifecycleAndAuthorization(t *testing.T) {
 	requestAs(t, f.h.handleCreateStudyPlan, 2, "POST", "/api/study-plans/create", body, 403)
 	w := requestAs(t, f.h.handleCreateStudyPlan, 1, "POST", "/api/study-plans/create", body, 200)
 	var plan StudyPlan
-	json.Unmarshal(w.Body.Bytes(), &plan)
+	if err := json.Unmarshal(w.Body.Bytes(), &plan); err != nil {
+		t.Fatal(err)
+	}
 	forged := fmt.Sprintf(`{"id":%d,"group_id":%d,"week_number":2,"start_date":"2026-09-22","end_date":"2026-09-29","book":"Genesis","start_chapter":1,"end_chapter":3}`, plan.ID, f.other.ID)
 	requestAs(t, f.h.handleUpdateStudyPlan, 3, "PUT", "/api/study-plans/update", forged, 403)
 	requestAs(t, f.h.handleDeleteStudyPlan, 3, "DELETE", "/api/study-plans/delete", forged, 403)
@@ -145,7 +147,9 @@ func TestInviteLifecycleAndPrayers(t *testing.T) {
 	requestAs(t, f.h.handleGroupsRESTful, 2, "POST", path, `{"username":"user3@example.test"}`, 403)
 	w := requestAs(t, f.h.handleGroupsRESTful, 1, "POST", path, `{"username":"user3@example.test"}`, 200)
 	var invite GroupInvite
-	json.Unmarshal(w.Body.Bytes(), &invite)
+	if err := json.Unmarshal(w.Body.Bytes(), &invite); err != nil {
+		t.Fatal(err)
+	}
 	accept := fmt.Sprintf("/api/groups/invites/%d/accept", invite.ID)
 	requestAs(t, f.h.handleGroupsRESTful, 2, "POST", accept, "", 403)
 	requestAs(t, f.h.handleGroupsRESTful, 3, "POST", accept, "", 200)
@@ -156,7 +160,9 @@ func TestInviteLifecycleAndPrayers(t *testing.T) {
 	requestAs(t, f.h.handleGroupsRESTful, 1, "POST", path, `{"username":"future@example.test"}`, 200)
 	w = requestAs(t, f.h.handleCreatePrayerRequest, 2, "POST", "/api/prayers/create", fmt.Sprintf(`{"group_id":%d,"title":"Prayer","content":"Please pray"}`, f.group.ID), 200)
 	var prayer PrayerRequest
-	json.Unmarshal(w.Body.Bytes(), &prayer)
+	if err := json.Unmarshal(w.Body.Bytes(), &prayer); err != nil {
+		t.Fatal(err)
+	}
 	requestAs(t, f.h.handlePrayersRESTful, 2, "POST", fmt.Sprintf("/api/prayers/%d/comments", prayer.ID), `{"content":"Praying"}`, 200)
 	requestAs(t, f.h.handlePrayersRESTful, 2, "PATCH", fmt.Sprintf("/api/prayers/%d/status", prayer.ID), `{"status":"answered","answer_explanation":"Thank you"}`, 200)
 	requestAs(t, f.h.handlePrayersRESTful, 2, "POST", fmt.Sprintf("/api/prayers/%d/archive", prayer.ID), "", 200)
@@ -186,7 +192,7 @@ func TestWebSocketPrivateAudience(t *testing.T) {
 	}
 	defer func() {
 		for _, conn := range clients {
-			conn.Close()
+			_ = conn.Close()
 		}
 	}()
 	// Ensure all registrations have been processed before enqueueing an event.
@@ -205,7 +211,7 @@ func TestWebSocketPrivateAudience(t *testing.T) {
 	}
 	BroadcastUpdate(BroadcastMessage{Type: "prayer", Action: "update", Scope: socialScope{GroupID: sql.NullInt64{Int64: f.group.ID, Valid: true}}})
 	for _, conn := range clients[:2] {
-		conn.SetReadDeadline(time.Now().Add(time.Second))
+		_ = conn.SetReadDeadline(time.Now().Add(time.Second))
 		var msg BroadcastMessage
 		if err := conn.ReadJSON(&msg); err != nil {
 			t.Fatal(err)
@@ -214,13 +220,13 @@ func TestWebSocketPrivateAudience(t *testing.T) {
 			t.Fatal("wrong message")
 		}
 	}
-	clients[2].SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+	_ = clients[2].SetReadDeadline(time.Now().Add(50 * time.Millisecond))
 	if _, _, err := clients[2].ReadMessage(); err == nil {
 		t.Fatal("outsider received private event")
 	}
 	headers := http.Header{"Cookie": []string{sessionCookieName + "=session1"}, "Origin": []string{"https://unrelated.example"}}
 	if conn, response, err := websocket.DefaultDialer.Dial(url, headers); err == nil {
-		conn.Close()
+		_ = conn.Close()
 		t.Fatal("cross-origin socket accepted")
 	} else if response.StatusCode != 403 {
 		t.Fatalf("expected origin rejection, got %d", response.StatusCode)

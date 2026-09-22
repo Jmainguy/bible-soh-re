@@ -80,10 +80,10 @@ func NewDatabase(dbPath string) (*Database, error) {
 	// Serialize schema changes across replicas; initialization uses one connection.
 	if postgres {
 		if _, err := db.Exec("SELECT pg_advisory_lock(72619402)"); err != nil {
-			db.Close()
+			_ = db.Close()
 			return nil, err
 		}
-		defer db.Exec("SELECT pg_advisory_unlock(72619402)")
+		defer func() { _, _ = db.Exec("SELECT pg_advisory_unlock(72619402)") }()
 	}
 	// Initialize tables
 	if err := database.initTables(); err != nil {

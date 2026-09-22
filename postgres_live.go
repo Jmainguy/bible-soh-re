@@ -23,7 +23,7 @@ func (d *Database) startLiveUpdates(dsn string) (func(), error) {
 		}
 	})
 	if err := listener.Listen("bible_updates"); err != nil {
-		listener.Close()
+		_ = listener.Close()
 		return nil, err
 	}
 	publishLive = func(msg BroadcastMessage) {
@@ -54,5 +54,5 @@ func (d *Database) startLiveUpdates(dsn string) (func(), error) {
 			}
 		}
 	}()
-	return func() { close(done); listener.Close() }, nil
+	return func() { close(done); _ = listener.Close() }, nil
 }
